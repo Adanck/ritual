@@ -5,6 +5,11 @@ import 'package:ritual/data/models/routine.dart';
 import 'package:ritual/data/services/storage_service.dart';
 import 'package:ritual/shared/widgets/time_block.dart';
 
+/// Pantalla principal del MVP.
+///
+/// Esta pantalla concentra el estado del día actual: carga rutinas,
+/// identifica cuál está activa, responde a la interacción del usuario
+/// y persiste los cambios en almacenamiento local.
 class TodayPage extends StatefulWidget {
   const TodayPage({super.key});
 
@@ -12,6 +17,10 @@ class TodayPage extends StatefulWidget {
   State<TodayPage> createState() => _TodayPageState();
 }
 
+/// Estado asociado a [TodayPage].
+///
+/// Aquí vive la lógica principal de la pantalla mientras el proyecto sigue en
+/// una arquitectura sencilla basada en `StatefulWidget`.
 class _TodayPageState extends State<TodayPage> {
   List<Routine> routines = [];
   Routine? activeRoutine;
@@ -22,6 +31,10 @@ class _TodayPageState extends State<TodayPage> {
     loadData();
   }
 
+  /// Carga las rutinas guardadas.
+  ///
+  /// Si es la primera ejecución, crea una rutina inicial para que la app tenga
+  /// contenido visible desde el primer arranque.
   Future<void> loadData() async {
     final saved = await StorageService.loadRoutines();
 
@@ -74,6 +87,7 @@ class _TodayPageState extends State<TodayPage> {
     setState(() {});
   }
 
+  /// Marca o desmarca un bloque de la rutina activa y persiste el cambio.
   void toggleBlock(int index) {
     if (activeRoutine == null) return;
 
@@ -84,6 +98,10 @@ class _TodayPageState extends State<TodayPage> {
     StorageService.saveRoutines(routines);
   }
 
+  /// Cambia cuál rutina está activa.
+  ///
+  /// La regla de negocio aquí es simple: solo puede existir una rutina activa
+  /// a la vez.
   Future<void> selectRoutine(Routine selectedRoutine) async {
     if (activeRoutine?.id == selectedRoutine.id) return;
 
@@ -98,6 +116,75 @@ class _TodayPageState extends State<TodayPage> {
     await StorageService.saveRoutines(routines);
   }
 
+  /// Crea una nueva rutina vacía y la deja como rutina activa.
+  ///
+  /// Para este MVP la creación es deliberadamente simple: solo pedimos nombre.
+  /// Los bloques se podrán agregar en el siguiente paso del roadmap.
+  Future<void> createRoutine() async {
+    final controller = TextEditingController();
+
+    final routineName = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+
+        return AlertDialog(
+          title: const Text('Nueva rutina'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(
+              labelText: 'Nombre',
+              hintText: 'Ej. Vacaciones',
+            ),
+            onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(
+                'Cancelar',
+                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('Crear'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    final normalizedName = routineName?.trim() ?? '';
+    if (normalizedName.isEmpty) return;
+
+    final newRoutine = Routine(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      name: normalizedName,
+      blocks: [],
+      isActive: true,
+    );
+
+    setState(() {
+      for (final routine in routines) {
+        routine.isActive = false;
+      }
+
+      routines = [...routines, newRoutine];
+      activeRoutine = newRoutine;
+    });
+
+    await StorageService.saveRoutines(routines);
+  }
+
+  /// Abre el selector visual de rutinas.
+  ///
+  /// Usamos un bottom sheet porque funciona bien en móvil y también escala de
+  /// forma razonable para escritorio.
   Future<void> showRoutineSelector() async {
     if (routines.isEmpty) return;
 
@@ -117,13 +204,37 @@ class _TodayPageState extends State<TodayPage> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
-                  child: Text(
-                    'Seleccionar rutina',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Seleccionar rutina',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      FilledButton.icon(
+                        onPressed: () async {
+                          Navigator.of(context).pop();
+                          await createRoutine();
+                        },
+                        icon: const Icon(Icons.add),
+                        label: const Text('Nueva'),
+                      ),
+                    ],
                   ),
                 ),
+                if (routines.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+                    child: Text(
+                      'Elige cuál rutina quieres usar hoy.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ),
                 ...routines.map((routine) {
                   final isSelected = routine.id == activeRoutine?.id;
 
@@ -163,6 +274,10 @@ class _TodayPageState extends State<TodayPage> {
     }
   }
 
+  /// Calcula el progreso total de la rutina activa.
+  ///
+  /// Por ahora el progreso usa todos los bloques. Más adelante podríamos
+  /// decidir si solo ciertos tipos deben contar para esta métrica.
   double get progress {
     final blocks = activeRoutine?.blocks ?? [];
     if (blocks.isEmpty) return 0;
@@ -206,6 +321,7 @@ class _TodayPageState extends State<TodayPage> {
       ),
       body: Column(
         children: [
+          // Tarjeta superior con el contexto del día y el progreso agregado.
           Padding(
             padding: const EdgeInsets.all(16),
             child: Container(
@@ -277,23 +393,57 @@ class _TodayPageState extends State<TodayPage> {
               ),
             ),
           ),
+          // Cuerpo principal: lista de bloques o estado vacío si la rutina
+          // todavía no tiene contenido.
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              itemCount: blocks.length,
-              itemBuilder: (context, index) {
-                final block = blocks[index];
+            child: blocks.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.event_note_rounded,
+                            size: 52,
+                            color: theme.colorScheme.primary.withValues(alpha: 0.9),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Esta rutina todavía no tiene bloques',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'La rutina ya quedó creada. El siguiente paso será agregar y editar bloques dentro de ella.',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    itemCount: blocks.length,
+                    itemBuilder: (context, index) {
+                      final block = blocks[index];
 
-                return TimeBlock(
-                  start: block.start,
-                  end: block.end,
-                  title: block.title,
-                  type: block.type,
-                  isDone: block.isDone,
-                  onToggle: () => toggleBlock(index),
-                );
-              },
-            ),
+                      return TimeBlock(
+                        start: block.start,
+                        end: block.end,
+                        title: block.title,
+                        type: block.type,
+                        isDone: block.isDone,
+                        onToggle: () => toggleBlock(index),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
