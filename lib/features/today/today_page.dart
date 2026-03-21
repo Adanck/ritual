@@ -7,9 +7,8 @@ import 'package:ritual/shared/widgets/time_block.dart';
 
 /// Pantalla principal del MVP.
 ///
-/// Esta pantalla concentra el estado del día actual: carga rutinas,
-/// identifica cuál está activa, responde a la interacción del usuario
-/// y persiste los cambios en almacenamiento local.
+/// Esta pantalla concentra el estado del dia actual: carga rutinas, identifica
+/// cual esta activa, responde a la interaccion del usuario y persiste cambios.
 class TodayPage extends StatefulWidget {
   const TodayPage({super.key});
 
@@ -19,7 +18,7 @@ class TodayPage extends StatefulWidget {
 
 /// Estado asociado a [TodayPage].
 ///
-/// Aquí vive la lógica principal de la pantalla mientras el proyecto sigue en
+/// Aqui vive la logica principal de la pantalla mientras el proyecto sigue con
 /// una arquitectura sencilla basada en `StatefulWidget`.
 class _TodayPageState extends State<TodayPage> {
   List<Routine> routines = [];
@@ -33,7 +32,7 @@ class _TodayPageState extends State<TodayPage> {
 
   /// Carga las rutinas guardadas.
   ///
-  /// Si es la primera ejecución, crea una rutina inicial para que la app tenga
+  /// Si es la primera ejecucion, crea una rutina inicial para que la app tenga
   /// contenido visible desde el primer arranque.
   Future<void> loadData() async {
     final saved = await StorageService.loadRoutines();
@@ -49,24 +48,28 @@ class _TodayPageState extends State<TodayPage> {
               start: '07:00',
               end: '07:45',
               title: 'Ingl\u00E9s',
+              description: 'Practica diaria para mantener constancia.',
               type: BlockType.habit,
             ),
             DayBlock(
               start: '08:00',
               end: '12:00',
               title: 'Trabajo',
+              description: 'Bloque principal de trabajo profundo.',
               type: BlockType.commitment,
             ),
             DayBlock(
               start: '12:00',
               end: '13:00',
               title: 'Almuerzo',
+              description: 'Pausa para comer y recargar energia.',
               type: BlockType.visual,
             ),
             DayBlock(
               start: '14:00',
               end: '15:00',
               title: 'Curso',
+              description: 'Espacio de aprendizaje y avance profesional.',
               type: BlockType.habit,
             ),
           ],
@@ -98,9 +101,9 @@ class _TodayPageState extends State<TodayPage> {
     StorageService.saveRoutines(routines);
   }
 
-  /// Cambia cuál rutina está activa.
+  /// Cambia cual rutina esta activa.
   ///
-  /// La regla de negocio aquí es simple: solo puede existir una rutina activa
+  /// La regla de negocio aqui es simple: solo puede existir una rutina activa
   /// a la vez.
   Future<void> selectRoutine(Routine selectedRoutine) async {
     if (activeRoutine?.id == selectedRoutine.id) return;
@@ -116,12 +119,9 @@ class _TodayPageState extends State<TodayPage> {
     await StorageService.saveRoutines(routines);
   }
 
-  /// Crea una nueva rutina vacía y la deja como rutina activa.
-  ///
-  /// Para este MVP la creación es deliberadamente simple: solo pedimos nombre.
-  /// Los bloques se podrán agregar en el siguiente paso del roadmap.
+  /// Crea una nueva rutina vacia y la deja como rutina activa.
   Future<void> createRoutine() async {
-    final controller = TextEditingController();
+    var draftName = '';
 
     final routineName = await showDialog<String>(
       context: context,
@@ -131,13 +131,13 @@ class _TodayPageState extends State<TodayPage> {
         return AlertDialog(
           title: const Text('Nueva rutina'),
           content: TextField(
-            controller: controller,
             autofocus: true,
             textInputAction: TextInputAction.done,
             decoration: const InputDecoration(
               labelText: 'Nombre',
               hintText: 'Ej. Vacaciones',
             ),
+            onChanged: (value) => draftName = value,
             onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
           ),
           actions: [
@@ -149,15 +149,13 @@ class _TodayPageState extends State<TodayPage> {
               ),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+              onPressed: () => Navigator.of(context).pop(draftName.trim()),
               child: const Text('Crear'),
             ),
           ],
         );
       },
     );
-
-    controller.dispose();
 
     final normalizedName = routineName?.trim() ?? '';
     if (normalizedName.isEmpty) return;
@@ -181,9 +179,175 @@ class _TodayPageState extends State<TodayPage> {
     await StorageService.saveRoutines(routines);
   }
 
+  /// Abre un formulario simple para crear un bloque dentro de la rutina activa.
+  ///
+  /// En esta version usamos campos de texto para las horas para avanzar rapido.
+  /// Mas adelante se puede reemplazar por selectores nativos y validaciones mas
+  /// estrictas.
+  Future<void> createBlock() async {
+    if (activeRoutine == null) return;
+
+    final formKey = GlobalKey<FormState>();
+    var selectedType = BlockType.habit;
+    var start = '';
+    var end = '';
+    var title = '';
+    var description = '';
+
+    final createdBlock = await showDialog<DayBlock>(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Nuevo bloque'),
+              content: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextFormField(
+                        autofocus: true,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'Titulo',
+                          hintText: 'Ej. Leer 10 paginas',
+                        ),
+                        onChanged: (value) => title = value,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Ingresa un titulo.';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        textInputAction: TextInputAction.next,
+                        minLines: 2,
+                        maxLines: 3,
+                        decoration: const InputDecoration(
+                          labelText: 'Descripcion opcional',
+                          hintText: 'Contexto o detalle del bloque',
+                        ),
+                        onChanged: (value) => description = value,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              textInputAction: TextInputAction.next,
+                              decoration: const InputDecoration(
+                                labelText: 'Inicio',
+                                hintText: '07:00',
+                              ),
+                              onChanged: (value) => start = value,
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return 'Requerido';
+                                }
+                                return null;
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextFormField(
+                              textInputAction: TextInputAction.done,
+                              decoration: const InputDecoration(
+                                labelText: 'Fin',
+                                hintText: '07:45',
+                              ),
+                              onChanged: (value) => end = value,
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return 'Requerido';
+                                }
+                                return null;
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<BlockType>(
+                        initialValue: selectedType,
+                        decoration: const InputDecoration(
+                          labelText: 'Tipo de bloque',
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: BlockType.habit,
+                            child: Text('H\u00E1bito'),
+                          ),
+                          DropdownMenuItem(
+                            value: BlockType.commitment,
+                            child: Text('Compromiso'),
+                          ),
+                          DropdownMenuItem(
+                            value: BlockType.visual,
+                            child: Text('Visual'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setDialogState(() {
+                            selectedType = value;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(
+                    'Cancelar',
+                    style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final isValid = formKey.currentState?.validate() ?? false;
+                    if (!isValid) return;
+
+                    Navigator.of(context).pop(
+                      DayBlock(
+                        start: start.trim(),
+                        end: end.trim(),
+                        title: title.trim(),
+                        description: description.trim(),
+                        type: selectedType,
+                      ),
+                    );
+                  },
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (createdBlock == null) return;
+
+    setState(() {
+      activeRoutine!.blocks.add(createdBlock);
+    });
+
+    await StorageService.saveRoutines(routines);
+  }
+
   /// Abre el selector visual de rutinas.
   ///
-  /// Usamos un bottom sheet porque funciona bien en móvil y también escala de
+  /// Usamos un bottom sheet porque funciona bien en movil y tambien escala de
   /// forma razonable para escritorio.
   Future<void> showRoutineSelector() async {
     if (routines.isEmpty) return;
@@ -225,16 +389,15 @@ class _TodayPageState extends State<TodayPage> {
                     ],
                   ),
                 ),
-                if (routines.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-                    child: Text(
-                      'Elige cuál rutina quieres usar hoy.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: Colors.white70,
-                      ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+                  child: Text(
+                    'Elige cual rutina quieres usar hoy.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.white70,
                     ),
                   ),
+                ),
                 ...routines.map((routine) {
                   final isSelected = routine.id == activeRoutine?.id;
 
@@ -276,8 +439,8 @@ class _TodayPageState extends State<TodayPage> {
 
   /// Calcula el progreso total de la rutina activa.
   ///
-  /// Por ahora el progreso usa todos los bloques. Más adelante podríamos
-  /// decidir si solo ciertos tipos deben contar para esta métrica.
+  /// Por ahora el progreso usa todos los bloques. Mas adelante podriamos
+  /// decidir si solo ciertos tipos deben contar para esta metrica.
   double get progress {
     final blocks = activeRoutine?.blocks ?? [];
     if (blocks.isEmpty) return 0;
@@ -310,6 +473,14 @@ class _TodayPageState extends State<TodayPage> {
         centerTitle: true,
         actions: [
           Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: IconButton(
+              tooltip: 'Agregar bloque',
+              onPressed: createBlock,
+              icon: const Icon(Icons.add_task_rounded),
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.only(right: 8),
             child: IconButton(
               tooltip: 'Cambiar rutina',
@@ -321,7 +492,7 @@ class _TodayPageState extends State<TodayPage> {
       ),
       body: Column(
         children: [
-          // Tarjeta superior con el contexto del día y el progreso agregado.
+          // Tarjeta superior con el contexto del dia y el progreso agregado.
           Padding(
             padding: const EdgeInsets.all(16),
             child: Container(
@@ -393,8 +564,8 @@ class _TodayPageState extends State<TodayPage> {
               ),
             ),
           ),
-          // Cuerpo principal: lista de bloques o estado vacío si la rutina
-          // todavía no tiene contenido.
+          // Cuerpo principal: lista de bloques o estado vacio si la rutina aun
+          // no tiene contenido.
           Expanded(
             child: blocks.isEmpty
                 ? Center(
@@ -410,7 +581,7 @@ class _TodayPageState extends State<TodayPage> {
                           ),
                           const SizedBox(height: 16),
                           Text(
-                            'Esta rutina todavía no tiene bloques',
+                            'Esta rutina todav\u00EDa no tiene bloques',
                             textAlign: TextAlign.center,
                             style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.w700,
@@ -418,11 +589,17 @@ class _TodayPageState extends State<TodayPage> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'La rutina ya quedó creada. El siguiente paso será agregar y editar bloques dentro de ella.',
+                            'La rutina ya quedo creada. Ahora puedes agregar tu primer bloque.',
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodyMedium?.copyWith(
                               color: Colors.white70,
                             ),
+                          ),
+                          const SizedBox(height: 20),
+                          FilledButton.icon(
+                            onPressed: createBlock,
+                            icon: const Icon(Icons.add),
+                            label: const Text('Agregar bloque'),
                           ),
                         ],
                       ),
@@ -438,6 +615,7 @@ class _TodayPageState extends State<TodayPage> {
                         start: block.start,
                         end: block.end,
                         title: block.title,
+                        description: block.description,
                         type: block.type,
                         isDone: block.isDone,
                         onToggle: () => toggleBlock(index),
@@ -446,6 +624,11 @@ class _TodayPageState extends State<TodayPage> {
                   ),
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: createBlock,
+        icon: const Icon(Icons.add),
+        label: const Text('Bloque'),
       ),
     );
   }

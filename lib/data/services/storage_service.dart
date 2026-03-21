@@ -4,9 +4,11 @@ import '../models/block_type.dart';
 import '../models/day_block.dart';
 import '../models/routine.dart';
 
+/// Encapsula la persistencia local del MVP usando Hive.
 class StorageService {
   static const String boxName = 'routines';
 
+  /// Serializa y guarda todas las rutinas.
   static Future<void> saveRoutines(List<Routine> routines) async {
     final box = await Hive.openBox(boxName);
 
@@ -20,6 +22,7 @@ class StorageService {
             'start': block.start,
             'end': block.end,
             'title': block.title,
+            'description': block.description,
             'type': block.type.name,
             'isDone': block.isDone,
           };
@@ -30,6 +33,7 @@ class StorageService {
     await box.put('routines', data);
   }
 
+  /// Carga las rutinas guardadas y las reconstruye como objetos de dominio.
   static Future<List<Routine>> loadRoutines() async {
     final box = await Hive.openBox(boxName);
     final data = box.get('routines');
@@ -46,7 +50,10 @@ class StorageService {
             start: block['start'],
             end: block['end'],
             title: block['title'],
-            type: BlockType.values.firstWhere((type) => type.name == block['type']),
+            description: block['description'] ?? '',
+            type: BlockType.values.firstWhere(
+              (type) => type.name == block['type'],
+            ),
             isDone: block['isDone'],
           );
         }).toList(),

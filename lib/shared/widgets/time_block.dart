@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:ritual/data/models/block_type.dart';
 
+/// Tarjeta visual reutilizable para renderizar un bloque del dia.
 class TimeBlock extends StatelessWidget {
   final String start;
   final String end;
   final String title;
+  final String description;
   final BlockType type;
   final bool isDone;
   final VoidCallback onToggle;
@@ -14,6 +16,7 @@ class TimeBlock extends StatelessWidget {
     required this.start,
     required this.end,
     required this.title,
+    required this.description,
     required this.type,
     required this.isDone,
     required this.onToggle,
@@ -22,6 +25,7 @@ class TimeBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+
     final color = switch (type) {
       BlockType.habit => const Color(0xFF41C47B),
       BlockType.commitment => const Color(0xFF4DA3FF),
@@ -46,16 +50,31 @@ class TimeBlock extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
-        subtitle: Text(
-          switch (type) {
-            BlockType.habit => 'Hábito',
-            BlockType.commitment => 'Compromiso',
-            BlockType.visual => 'Visual',
-          },
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: color.withValues(alpha: 0.92),
-            fontWeight: FontWeight.w600,
-          ),
+        subtitle: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              switch (type) {
+                BlockType.habit => 'H\u00E1bito',
+                BlockType.commitment => 'Compromiso',
+                BlockType.visual => 'Visual',
+              },
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: color.withValues(alpha: 0.92),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            if (description.trim().isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                description,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.white70,
+                ),
+              ),
+            ],
+          ],
         ),
         trailing: type == BlockType.habit
             ? IconButton(
