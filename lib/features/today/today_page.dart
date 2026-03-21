@@ -84,6 +84,85 @@ class _TodayPageState extends State<TodayPage> {
     StorageService.saveRoutines(routines);
   }
 
+  Future<void> selectRoutine(Routine selectedRoutine) async {
+    if (activeRoutine?.id == selectedRoutine.id) return;
+
+    setState(() {
+      for (final routine in routines) {
+        routine.isActive = routine.id == selectedRoutine.id;
+      }
+
+      activeRoutine = selectedRoutine;
+    });
+
+    await StorageService.saveRoutines(routines);
+  }
+
+  Future<void> showRoutineSelector() async {
+    if (routines.isEmpty) return;
+
+    final selectedRoutine = await showModalBottomSheet<Routine>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
+                  child: Text(
+                    'Seleccionar rutina',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                ...routines.map((routine) {
+                  final isSelected = routine.id == activeRoutine?.id;
+
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      leading: Icon(
+                        isSelected
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_off,
+                        color: isSelected ? theme.colorScheme.primary : null,
+                      ),
+                      title: Text(routine.name),
+                      subtitle: Text('${routine.blocks.length} bloques'),
+                      trailing: isSelected
+                          ? Icon(
+                              Icons.check_circle,
+                              color: theme.colorScheme.primary,
+                            )
+                          : null,
+                      onTap: () => Navigator.of(context).pop(routine),
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selectedRoutine != null) {
+      await selectRoutine(selectedRoutine);
+    }
+  }
+
   double get progress {
     final blocks = activeRoutine?.blocks ?? [];
     if (blocks.isEmpty) return 0;
@@ -114,6 +193,16 @@ class _TodayPageState extends State<TodayPage> {
       appBar: AppBar(
         title: Text('Hoy \u00B7 ${activeRoutine!.name}'),
         centerTitle: true,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: IconButton(
+              tooltip: 'Cambiar rutina',
+              onPressed: showRoutineSelector,
+              icon: const Icon(Icons.swap_horiz_rounded),
+            ),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -151,6 +240,21 @@ class _TodayPageState extends State<TodayPage> {
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: Colors.white70,
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      Chip(
+                        avatar: const Icon(Icons.auto_awesome_motion, size: 18),
+                        label: Text(activeRoutine!.name),
+                      ),
+                      Chip(
+                        avatar: const Icon(Icons.view_list_rounded, size: 18),
+                        label: Text('${blocks.length} bloques'),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
                   TweenAnimationBuilder<double>(
