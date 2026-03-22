@@ -194,6 +194,55 @@ class _TodayPageState extends State<TodayPage> {
     await StorageService.saveRoutines(routines);
   }
 
+  /// Permite renombrar una rutina existente sin alterar sus bloques.
+  Future<void> renameRoutine(Routine routine) async {
+    var draftName = routine.name;
+
+    final routineName = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+
+        return AlertDialog(
+          title: const Text('Renombrar rutina'),
+          content: TextFormField(
+            initialValue: routine.name,
+            autofocus: true,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(
+              labelText: 'Nombre',
+              hintText: 'Ej. Vacaciones',
+            ),
+            onChanged: (value) => draftName = value,
+            onFieldSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(
+                'Cancelar',
+                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(draftName.trim()),
+              child: const Text('Guardar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    final normalizedName = routineName?.trim() ?? '';
+    if (normalizedName.isEmpty || normalizedName == routine.name) return;
+
+    setState(() {
+      routine.name = normalizedName;
+    });
+
+    await StorageService.saveRoutines(routines);
+  }
+
   /// Convierte un texto `HH:mm` en un [TimeOfDay] cuando el formato es valido.
   TimeOfDay? parseTime(String value) {
     final parts = value.split(':');
@@ -501,6 +550,26 @@ class _TodayPageState extends State<TodayPage> {
     await StorageService.saveRoutines(routines);
   }
 
+  /// Reordena los bloques de la rutina activa.
+  ///
+  /// Flutter entrega `newIndex` en la posicion final esperada, pero cuando el
+  /// elemento viene de arriba hacia abajo hay que ajustar el indice por el
+  /// efecto de haber removido primero el item original.
+  void reorderBlocks(int oldIndex, int newIndex) {
+    if (activeRoutine == null) return;
+
+    setState(() {
+      if (newIndex > oldIndex) {
+        newIndex -= 1;
+      }
+
+      final movedBlock = activeRoutine!.blocks.removeAt(oldIndex);
+      activeRoutine!.blocks.insert(newIndex, movedBlock);
+    });
+
+    StorageService.saveRoutines(routines);
+  }
+
   /// Abre el selector visual de rutinas.
   ///
   /// Usamos un bottom sheet porque funciona bien en movil y tambien escala de
@@ -571,12 +640,24 @@ class _TodayPageState extends State<TodayPage> {
                       ),
                       title: Text(routine.name),
                       subtitle: Text('${routine.blocks.length} bloques'),
-                      trailing: isSelected
-                          ? Icon(
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: 'Renombrar rutina',
+                            onPressed: () async {
+                              Navigator.of(context).pop();
+                              await renameRoutine(routine);
+                            },
+                            icon: const Icon(Icons.edit_outlined),
+                          ),
+                          if (isSelected)
+                            Icon(
                               Icons.check_circle,
                               color: theme.colorScheme.primary,
-                            )
-                          : null,
+                            ),
+                        ],
+                      ),
                       onTap: () => Navigator.of(context).pop(routine),
                     ),
                   );
@@ -761,12 +842,15 @@ class _TodayPageState extends State<TodayPage> {
                       ),
                     ),
                   )
-                : ListView.builder(
+                : ReorderableListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    buildDefaultDragHandles: false,
                     itemCount: blocks.length,
+                    onReorder: reorderBlocks,
                     itemBuilder: (context, index) {
                       final block = blocks[index];
-                      final blockKey = '${activeRoutine!.id}-${block.start}-${block.title}-$index';
+                      final blockKey =
+                          '${activeRoutine!.id}-${block.start}-${block.title}-$index';
 
                       return Dismissible(
                         key: ValueKey(blockKey),
@@ -861,7 +945,13 @@ class _TodayPageState extends State<TodayPage> {
                           type: block.type,
                           isDone: block.isDone,
                           onTap: () => toggleBlock(index),
-                          onToggle: () => toggleBlock(index),
+                          secondaryAction: ReorderableDelayedDragStartListener(
+                            index: index,
+                            child: Icon(
+                              Icons.drag_indicator_rounded,
+                              color: Colors.white38,
+                            ),
+                          ),
                         ),
                       );
                     },

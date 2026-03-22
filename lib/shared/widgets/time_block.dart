@@ -9,8 +9,8 @@ class TimeBlock extends StatelessWidget {
   final String description;
   final BlockType type;
   final bool isDone;
-  final VoidCallback onToggle;
   final VoidCallback? onTap;
+  final Widget? secondaryAction;
 
   const TimeBlock({
     super.key,
@@ -20,8 +20,8 @@ class TimeBlock extends StatelessWidget {
     required this.description,
     required this.type,
     required this.isDone,
-    required this.onToggle,
     this.onTap,
+    this.secondaryAction,
   });
 
   @override
@@ -79,24 +79,35 @@ class TimeBlock extends StatelessWidget {
             ],
           ],
         ),
-        trailing: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 220),
-          switchInCurve: Curves.easeOut,
-          switchOutCurve: Curves.easeIn,
-          transitionBuilder: (child, animation) {
-            return ScaleTransition(
-              scale: animation,
-              child: FadeTransition(
-                opacity: animation,
-                child: child,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              transitionBuilder: (child, animation) {
+                return ScaleTransition(
+                  scale: animation,
+                  child: FadeTransition(
+                    opacity: animation,
+                    child: child,
+                  ),
+                );
+              },
+              child: Icon(
+                isDone
+                    ? Icons.check_circle_rounded
+                    : Icons.radio_button_unchecked_rounded,
+                key: ValueKey(isDone),
+                color: isDone ? color : Colors.white38,
               ),
-            );
-          },
-          child: Icon(
-            isDone ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
-            key: ValueKey(isDone),
-            color: isDone ? color : Colors.white38,
-          ),
+            ),
+            if (secondaryAction != null) ...[
+              const SizedBox(width: 10),
+              secondaryAction!,
+            ],
+          ],
         ),
       ),
     );

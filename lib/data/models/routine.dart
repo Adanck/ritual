@@ -6,7 +6,7 @@ import 'day_block.dart';
 /// tenga distintos "modos" de día, por ejemplo `Normal` o `Vacaciones`.
 class Routine {
   final String id;
-  final String name;
+  String name;
   final List<DayBlock> blocks;
   bool isActive;
 
