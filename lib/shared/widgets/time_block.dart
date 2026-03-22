@@ -10,6 +10,7 @@ class TimeBlock extends StatelessWidget {
   final BlockType type;
   final bool isDone;
   final VoidCallback onToggle;
+  final VoidCallback? onTap;
 
   const TimeBlock({
     super.key,
@@ -20,6 +21,7 @@ class TimeBlock extends StatelessWidget {
     required this.type,
     required this.isDone,
     required this.onToggle,
+    this.onTap,
   });
 
   @override
@@ -36,6 +38,7 @@ class TimeBlock extends StatelessWidget {
       color: isDone ? color.withValues(alpha: 0.16) : theme.cardColor,
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
+        onTap: onTap,
         leading: Text(
           '$start\n$end',
           textAlign: TextAlign.center,
@@ -76,15 +79,25 @@ class TimeBlock extends StatelessWidget {
             ],
           ],
         ),
-        trailing: type == BlockType.habit
-            ? IconButton(
-                icon: Icon(
-                  isDone ? Icons.check_circle : Icons.check_circle_outline,
-                  color: isDone ? color : null,
-                ),
-                onPressed: onToggle,
-              )
-            : null,
+        trailing: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          switchInCurve: Curves.easeOut,
+          switchOutCurve: Curves.easeIn,
+          transitionBuilder: (child, animation) {
+            return ScaleTransition(
+              scale: animation,
+              child: FadeTransition(
+                opacity: animation,
+                child: child,
+              ),
+            );
+          },
+          child: Icon(
+            isDone ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+            key: ValueKey(isDone),
+            color: isDone ? color : Colors.white38,
+          ),
+        ),
       ),
     );
   }

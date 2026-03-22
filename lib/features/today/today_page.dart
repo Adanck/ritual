@@ -24,6 +24,21 @@ class _TodayPageState extends State<TodayPage> {
   List<Routine> routines = [];
   Routine? activeRoutine;
 
+  static const List<DropdownMenuItem<BlockType>> _blockTypeOptions = [
+    DropdownMenuItem(
+      value: BlockType.habit,
+      child: Text('H\u00E1bito'),
+    ),
+    DropdownMenuItem(
+      value: BlockType.commitment,
+      child: Text('Compromiso'),
+    ),
+    DropdownMenuItem(
+      value: BlockType.visual,
+      child: Text('Visual'),
+    ),
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -179,30 +194,113 @@ class _TodayPageState extends State<TodayPage> {
     await StorageService.saveRoutines(routines);
   }
 
-  /// Abre un formulario simple para crear un bloque dentro de la rutina activa.
+  /// Convierte un texto `HH:mm` en un [TimeOfDay] cuando el formato es valido.
+  TimeOfDay? parseTime(String value) {
+    final parts = value.split(':');
+    if (parts.length != 2) return null;
+
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+
+    if (hour == null || minute == null) return null;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+
+    return TimeOfDay(hour: hour, minute: minute);
+  }
+
+  /// Da formato consistente `HH:mm` a una hora para mostrarla y persistirla.
+  String formatTimeOfDay(TimeOfDay time) {
+    final hour = time.hour.toString().padLeft(2, '0');
+    final minute = time.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  /// Compara horas para validar que el rango tenga sentido.
+  bool isEndAfterStart(String start, String end) {
+    final startTime = parseTime(start);
+    final endTime = parseTime(end);
+    if (startTime == null || endTime == null) return false;
+
+    final startMinutes = startTime.hour * 60 + startTime.minute;
+    final endMinutes = endTime.hour * 60 + endTime.minute;
+    return endMinutes > startMinutes;
+  }
+
+  /// Abre el selector nativo de hora y devuelve el valor ya formateado.
+  Future<String?> pickTime({
+    required BuildContext context,
+    String? initialValue,
+  }) async {
+    final initialTime = parseTime(initialValue ?? '') ?? TimeOfDay.now();
+
+    final selectedTime = await showTimePicker(
+      context: context,
+      initialTime: initialTime,
+      builder: (context, child) {
+        final theme = Theme.of(context);
+
+        return Theme(
+          data: theme.copyWith(
+            timePickerTheme: TimePickerThemeData(
+              backgroundColor: theme.colorScheme.surface,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (selectedTime == null) return null;
+    return formatTimeOfDay(selectedTime);
+  }
+
+  /// Abre el formulario de bloque en modo crear o editar.
   ///
-  /// En esta version usamos campos de texto para las horas para avanzar rapido.
-  /// Mas adelante se puede reemplazar por selectores nativos y validaciones mas
-  /// estrictas.
-  Future<void> createBlock() async {
-    if (activeRoutine == null) return;
-
+  /// Si [existingBlock] viene informado, el formulario se precarga y al guardar
+  /// devolvemos un bloque actualizado. Si no, se crea uno nuevo desde cero.
+  Future<DayBlock?> showBlockForm({DayBlock? existingBlock}) async {
     final formKey = GlobalKey<FormState>();
-    var selectedType = BlockType.habit;
-    var start = '';
-    var end = '';
-    var title = '';
-    var description = '';
+    var selectedType = existingBlock?.type ?? BlockType.habit;
+    var start = existingBlock?.start ?? '';
+    var end = existingBlock?.end ?? '';
+    var title = existingBlock?.title ?? '';
+    var description = existingBlock?.description ?? '';
 
-    final createdBlock = await showDialog<DayBlock>(
+    return showDialog<DayBlock>(
       context: context,
       builder: (context) {
         final theme = Theme.of(context);
 
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            Future<void> handlePickStartTime() async {
+              final pickedTime = await pickTime(
+                context: context,
+                initialValue: start,
+              );
+              if (pickedTime == null) return;
+
+              setDialogState(() {
+                start = pickedTime;
+              });
+            }
+
+            Future<void> handlePickEndTime() async {
+              final pickedTime = await pickTime(
+                context: context,
+                initialValue: end,
+              );
+              if (pickedTime == null) return;
+
+              setDialogState(() {
+                end = pickedTime;
+              });
+            }
+
             return AlertDialog(
-              title: const Text('Nuevo bloque'),
+              title: Text(
+                existingBlock == null ? 'Nuevo bloque' : 'Editar bloque',
+              ),
               content: SingleChildScrollView(
                 child: Form(
                   key: formKey,
@@ -210,6 +308,7 @@ class _TodayPageState extends State<TodayPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       TextFormField(
+                        initialValue: title,
                         autofocus: true,
                         textInputAction: TextInputAction.next,
                         decoration: const InputDecoration(
@@ -226,6 +325,7 @@ class _TodayPageState extends State<TodayPage> {
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
+                        initialValue: description,
                         textInputAction: TextInputAction.next,
                         minLines: 2,
                         maxLines: 3,
@@ -239,60 +339,74 @@ class _TodayPageState extends State<TodayPage> {
                       Row(
                         children: [
                           Expanded(
-                            child: TextFormField(
-                              textInputAction: TextInputAction.next,
-                              decoration: const InputDecoration(
-                                labelText: 'Inicio',
-                                hintText: '07:00',
+                            child: InkWell(
+                              onTap: handlePickStartTime,
+                              borderRadius: BorderRadius.circular(12),
+                              child: InputDecorator(
+                                decoration: const InputDecoration(
+                                  labelText: 'Inicio',
+                                  suffixIcon: Icon(Icons.schedule_rounded),
+                                ),
+                                child: Text(
+                                  start.isEmpty ? 'Seleccionar' : start,
+                                  style: theme.textTheme.bodyLarge?.copyWith(
+                                    color: start.isEmpty ? Colors.white54 : null,
+                                  ),
+                                ),
                               ),
-                              onChanged: (value) => start = value,
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'Requerido';
-                                }
-                                return null;
-                              },
                             ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: TextFormField(
-                              textInputAction: TextInputAction.done,
-                              decoration: const InputDecoration(
-                                labelText: 'Fin',
-                                hintText: '07:45',
+                            child: InkWell(
+                              onTap: handlePickEndTime,
+                              borderRadius: BorderRadius.circular(12),
+                              child: InputDecorator(
+                                decoration: const InputDecoration(
+                                  labelText: 'Fin',
+                                  suffixIcon: Icon(Icons.schedule_rounded),
+                                ),
+                                child: Text(
+                                  end.isEmpty ? 'Seleccionar' : end,
+                                  style: theme.textTheme.bodyLarge?.copyWith(
+                                    color: end.isEmpty ? Colors.white54 : null,
+                                  ),
+                                ),
                               ),
-                              onChanged: (value) => end = value,
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'Requerido';
-                                }
-                                return null;
-                              },
                             ),
                           ),
                         ],
                       ),
+                      if (start.isEmpty || end.isEmpty) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Selecciona hora de inicio y fin.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.error,
+                            ),
+                          ),
+                        ),
+                      ] else if (!isEndAfterStart(start, end)) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'La hora de fin debe ser mayor que la de inicio.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.error,
+                            ),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       DropdownButtonFormField<BlockType>(
                         initialValue: selectedType,
                         decoration: const InputDecoration(
                           labelText: 'Tipo de bloque',
                         ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: BlockType.habit,
-                            child: Text('H\u00E1bito'),
-                          ),
-                          DropdownMenuItem(
-                            value: BlockType.commitment,
-                            child: Text('Compromiso'),
-                          ),
-                          DropdownMenuItem(
-                            value: BlockType.visual,
-                            child: Text('Visual'),
-                          ),
-                        ],
+                        items: _blockTypeOptions,
                         onChanged: (value) {
                           if (value == null) return;
                           setDialogState(() {
@@ -315,7 +429,15 @@ class _TodayPageState extends State<TodayPage> {
                 FilledButton(
                   onPressed: () {
                     final isValid = formKey.currentState?.validate() ?? false;
-                    if (!isValid) return;
+                    final hasValidTimeRange =
+                        start.isNotEmpty &&
+                        end.isNotEmpty &&
+                        isEndAfterStart(start, end);
+
+                    if (!isValid || !hasValidTimeRange) {
+                      setDialogState(() {});
+                      return;
+                    }
 
                     Navigator.of(context).pop(
                       DayBlock(
@@ -324,10 +446,11 @@ class _TodayPageState extends State<TodayPage> {
                         title: title.trim(),
                         description: description.trim(),
                         type: selectedType,
+                        isDone: existingBlock?.isDone ?? false,
                       ),
                     );
                   },
-                  child: const Text('Guardar'),
+                  child: Text(existingBlock == null ? 'Guardar' : 'Actualizar'),
                 ),
               ],
             );
@@ -335,11 +458,44 @@ class _TodayPageState extends State<TodayPage> {
         );
       },
     );
+  }
+
+  /// Crea un nuevo bloque dentro de la rutina activa.
+  Future<void> createBlock() async {
+    if (activeRoutine == null) return;
+    final createdBlock = await showBlockForm();
 
     if (createdBlock == null) return;
 
     setState(() {
       activeRoutine!.blocks.add(createdBlock);
+    });
+
+    await StorageService.saveRoutines(routines);
+  }
+
+  /// Edita un bloque existente reemplazandolo por una nueva version.
+  Future<void> editBlock(int index) async {
+    if (activeRoutine == null) return;
+
+    final block = activeRoutine!.blocks[index];
+    final updatedBlock = await showBlockForm(existingBlock: block);
+
+    if (updatedBlock == null) return;
+
+    setState(() {
+      activeRoutine!.blocks[index] = updatedBlock;
+    });
+
+    await StorageService.saveRoutines(routines);
+  }
+
+  /// Elimina un bloque existente de la rutina activa.
+  Future<void> deleteBlock(int index) async {
+    if (activeRoutine == null) return;
+
+    setState(() {
+      activeRoutine!.blocks.removeAt(index);
     });
 
     await StorageService.saveRoutines(routines);
@@ -610,15 +766,103 @@ class _TodayPageState extends State<TodayPage> {
                     itemCount: blocks.length,
                     itemBuilder: (context, index) {
                       final block = blocks[index];
+                      final blockKey = '${activeRoutine!.id}-${block.start}-${block.title}-$index';
 
-                      return TimeBlock(
-                        start: block.start,
-                        end: block.end,
-                        title: block.title,
-                        description: block.description,
-                        type: block.type,
-                        isDone: block.isDone,
-                        onToggle: () => toggleBlock(index),
+                      return Dismissible(
+                        key: ValueKey(blockKey),
+                        background: Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          alignment: Alignment.centerLeft,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.edit_rounded,
+                                color: theme.colorScheme.primary,
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                'Editar',
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        secondaryBackground: Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.error.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          alignment: Alignment.centerRight,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Eliminar',
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  color: theme.colorScheme.error,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Icon(
+                                Icons.delete_outline_rounded,
+                                color: theme.colorScheme.error,
+                              ),
+                            ],
+                          ),
+                        ),
+                        confirmDismiss: (direction) async {
+                          if (direction == DismissDirection.startToEnd) {
+                            await editBlock(index);
+                            return false;
+                          }
+
+                          final shouldDelete = await showDialog<bool>(
+                            context: context,
+                            builder: (context) {
+                              return AlertDialog(
+                                title: const Text('Eliminar bloque'),
+                                content: Text(
+                                  'Se eliminara "${block.title}". Esta accion no se puede deshacer.',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.of(context).pop(false),
+                                    child: const Text('Cancelar'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () => Navigator.of(context).pop(true),
+                                    child: const Text('Eliminar'),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+
+                          return shouldDelete ?? false;
+                        },
+                        onDismissed: (_) => deleteBlock(index),
+                        child: TimeBlock(
+                          start: block.start,
+                          end: block.end,
+                          title: block.title,
+                          description: block.description,
+                          type: block.type,
+                          isDone: block.isDone,
+                          onTap: () => toggleBlock(index),
+                          onToggle: () => toggleBlock(index),
+                        ),
                       );
                     },
                   ),
