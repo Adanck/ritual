@@ -248,6 +248,66 @@ class _TodayPageState extends State<TodayPage> {
     await StorageService.saveRoutines(routines);
   }
 
+  /// Elimina una rutina existente de forma segura.
+  ///
+  /// Regla: nunca dejamos la app sin al menos una rutina disponible.
+  /// Caso borde: si se elimina la rutina activa, activamos otra automaticamente.
+  Future<void> deleteRoutine(Routine routine) async {
+    // Regla: la ultima rutina no se puede borrar para evitar un estado vacio
+    // estructural de la app.
+    if (routines.length <= 1) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Debe existir al menos una rutina.'),
+        ),
+      );
+      return;
+    }
+
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Eliminar rutina'),
+          content: Text(
+            'Se eliminara "${routine.name}" con todos sus bloques. Esta accion no se puede deshacer.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Eliminar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldDelete != true) return;
+
+    setState(() {
+      routines.removeWhere((item) => item.id == routine.id);
+
+      // Caso borde: si la rutina activa fue eliminada, promovemos la primera
+      // disponible como nueva rutina activa.
+      if (activeRoutine?.id == routine.id && routines.isNotEmpty) {
+        for (final item in routines) {
+          item.isActive = false;
+        }
+
+        routines.first.isActive = true;
+        activeRoutine = routines.first;
+      }
+    });
+
+    await StorageService.saveRoutines(routines);
+  }
+
   /// Abre el selector nativo de hora y devuelve el valor ya formateado.
   Future<String?> pickTime({
     required BuildContext context,
@@ -614,6 +674,7 @@ class _TodayPageState extends State<TodayPage> {
                 ),
                 ...routines.map((routine) {
                   final isSelected = routine.id == activeRoutine?.id;
+                  final canDelete = routines.length > 1;
 
                   return Card(
                     margin: const EdgeInsets.only(bottom: 10),
@@ -639,6 +700,18 @@ class _TodayPageState extends State<TodayPage> {
                               await renameRoutine(routine);
                             },
                             icon: const Icon(Icons.edit_outlined),
+                          ),
+                          IconButton(
+                            tooltip: canDelete
+                                ? 'Eliminar rutina'
+                                : 'Debe existir al menos una rutina',
+                            onPressed: canDelete
+                                ? () async {
+                                    Navigator.of(context).pop();
+                                    await deleteRoutine(routine);
+                                  }
+                                : null,
+                            icon: const Icon(Icons.delete_outline_rounded),
                           ),
                           if (isSelected)
                             Icon(
