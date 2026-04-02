@@ -1,6 +1,7 @@
 import 'package:hive/hive.dart';
 
 import '../models/block_type.dart';
+import '../models/dated_block_entry.dart';
 import '../models/daily_record.dart';
 import '../models/day_block.dart';
 import '../models/routine.dart';
@@ -11,6 +12,7 @@ class StorageService {
   static const String boxName = 'routines';
   static const String routinesKey = 'routines';
   static const String dailyRecordsKey = 'dailyRecords';
+  static const String datedBlocksKey = 'datedBlocks';
 
   /// Serializa y guarda todas las rutinas.
   static Future<void> saveRoutines(List<Routine> routines) async {
@@ -139,6 +141,57 @@ class StorageService {
             isDone: block['isDone'],
           );
         }).toList(),
+      );
+    }).toList();
+  }
+
+  /// Guarda bloques puntuales asociados a fechas concretas.
+  static Future<void> saveDatedBlocks(List<DatedBlockEntry> datedBlocks) async {
+    final box = await Hive.openBox(boxName);
+
+    final data = datedBlocks.map((entry) {
+      return {
+        'dateKey': entry.dateKey,
+        'block': {
+          'id': entry.block.id,
+          'start': entry.block.start,
+          'end': entry.block.end,
+          'title': entry.block.title,
+          'description': entry.block.description,
+          'type': entry.block.type.name,
+          'countsTowardProgress': entry.block.countsTowardProgress,
+          'isDone': entry.block.isDone,
+        },
+      };
+    }).toList();
+
+    await box.put(datedBlocksKey, data);
+  }
+
+  /// Carga bloques puntuales asociados a una fecha concreta.
+  static Future<List<DatedBlockEntry>> loadDatedBlocks() async {
+    final box = await Hive.openBox(boxName);
+    final data = box.get(datedBlocksKey);
+
+    if (data == null) return [];
+
+    return (data as List).map((item) {
+      final block = item['block'];
+
+      return DatedBlockEntry(
+        dateKey: item['dateKey'],
+        block: DayBlock(
+          id: block['id'],
+          start: block['start'],
+          end: block['end'],
+          title: block['title'],
+          description: block['description'] ?? '',
+          type: BlockType.values.firstWhere(
+            (type) => type.name == block['type'],
+          ),
+          countsTowardProgress: block['countsTowardProgress'] ?? false,
+          isDone: block['isDone'],
+        ),
       );
     }).toList();
   }

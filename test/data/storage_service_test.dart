@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:ritual/data/models/block_type.dart';
+import 'package:ritual/data/models/dated_block_entry.dart';
 import 'package:ritual/data/models/daily_record.dart';
 import 'package:ritual/data/models/day_block.dart';
 import 'package:ritual/data/models/routine.dart';
@@ -97,5 +98,31 @@ void main() {
     expect(loadedDailyRecords.first.blocks.first.id, 'block-1');
     expect(loadedDailyRecords.first.blocks.first.title, 'Ingles');
     expect(loadedDailyRecords.first.blocks.first.isDone, isTrue);
+  });
+
+  test('saveDatedBlocks and loadDatedBlocks preserve reminders by date', () async {
+    final datedBlocks = [
+      DatedBlockEntry(
+        dateKey: '2026-04-10',
+        block: DayBlock(
+          id: 'reminder-1',
+          start: '16:00',
+          end: '16:30',
+          title: 'Reunion',
+          description: 'Llamada puntual del viernes',
+          type: BlockType.reminder,
+          countsTowardProgress: false,
+        ),
+      ),
+    ];
+
+    await StorageService.saveDatedBlocks(datedBlocks);
+    final loadedDatedBlocks = await StorageService.loadDatedBlocks();
+
+    expect(loadedDatedBlocks, hasLength(1));
+    expect(loadedDatedBlocks.first.dateKey, '2026-04-10');
+    expect(loadedDatedBlocks.first.block.id, 'reminder-1');
+    expect(loadedDatedBlocks.first.block.type, BlockType.reminder);
+    expect(loadedDatedBlocks.first.block.countsTowardProgress, isFalse);
   });
 }

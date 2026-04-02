@@ -5,6 +5,9 @@ import 'package:ritual/data/models/day_block.dart';
 ///
 /// La idea es centralizar estas reglas para reutilizarlas en UI y tests.
 class DayBlockTimeValidator {
+  static const String overlapMessage =
+      'Este bloque se traslapa con otro bloque existente.';
+
   /// Convierte un texto `HH:mm` en un [TimeOfDay] cuando el formato es valido.
   static TimeOfDay? parseTime(String value) {
     final parts = value.split(':');
@@ -57,7 +60,10 @@ class DayBlockTimeValidator {
 
     for (final block in existingBlocks) {
       // Regla: cuando editamos un bloque, ignoramos su version original.
-      if (identical(block, blockBeingEdited)) continue;
+      if (identical(block, blockBeingEdited) ||
+          (blockBeingEdited != null && block.id == blockBeingEdited.id)) {
+        continue;
+      }
 
       final blockStart = toMinutes(block.start);
       final blockEnd = toMinutes(block.end);
@@ -73,11 +79,9 @@ class DayBlockTimeValidator {
   }
 
   /// Devuelve un mensaje listo para UI cuando alguna regla falla.
-  static String? validateTimeRange({
+  static String? validateBasicTimeRange({
     required String start,
     required String end,
-    required List<DayBlock> existingBlocks,
-    DayBlock? blockBeingEdited,
   }) {
     // Regla: ambos extremos del rango deben existir antes de guardar.
     if (start.isEmpty || end.isEmpty) {
@@ -94,6 +98,22 @@ class DayBlockTimeValidator {
       return 'La hora de fin debe ser mayor que la de inicio.';
     }
 
+    return null;
+  }
+
+  /// Devuelve un mensaje listo para UI cuando alguna regla falla.
+  static String? validateTimeRange({
+    required String start,
+    required String end,
+    required List<DayBlock> existingBlocks,
+    DayBlock? blockBeingEdited,
+  }) {
+    final basicValidationMessage = validateBasicTimeRange(
+      start: start,
+      end: end,
+    );
+    if (basicValidationMessage != null) return basicValidationMessage;
+
     // Regla: no se permiten traslapes con otros bloques de la rutina.
     if (hasOverlap(
       start: start,
@@ -101,7 +121,7 @@ class DayBlockTimeValidator {
       existingBlocks: existingBlocks,
       blockBeingEdited: blockBeingEdited,
     )) {
-      return 'Este bloque se traslapa con otro bloque existente.';
+      return overlapMessage;
     }
 
     return null;

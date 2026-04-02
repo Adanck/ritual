@@ -34,6 +34,7 @@ class TimeBlock extends StatelessWidget {
       BlockType.habit => const Color(0xFF41C47B),
       BlockType.commitment => const Color(0xFF4DA3FF),
       BlockType.visual => const Color(0xFFB0BAC5),
+      BlockType.reminder => const Color(0xFFFFA24D),
     };
 
     return Card(
@@ -64,6 +65,7 @@ class TimeBlock extends StatelessWidget {
                 BlockType.habit => 'H\u00E1bito',
                 BlockType.commitment => 'Compromiso',
                 BlockType.visual => 'Visual',
+                BlockType.reminder => 'Recordatorio',
               },
               style: theme.textTheme.bodySmall?.copyWith(
                 color: color.withValues(alpha: 0.92),

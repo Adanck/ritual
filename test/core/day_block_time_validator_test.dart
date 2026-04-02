@@ -85,6 +85,20 @@ void main() {
       );
     });
 
+    test('allow editing a cloned block with the same id', () {
+      final clonedBlock = existingBlocks.first.copyWith();
+
+      expect(
+        DayBlockTimeValidator.validateTimeRange(
+          start: '08:00',
+          end: '09:00',
+          existingBlocks: existingBlocks,
+          blockBeingEdited: clonedBlock,
+        ),
+        isNull,
+      );
+    });
+
     test('accept non-overlapping valid ranges', () {
       expect(
         DayBlockTimeValidator.validateTimeRange(

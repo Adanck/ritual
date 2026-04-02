@@ -3,6 +3,7 @@ import 'package:ritual/core/utils/date_key.dart';
 import 'package:ritual/core/utils/day_block_time_validator.dart';
 import 'package:ritual/core/utils/routine_history_insights.dart';
 import 'package:ritual/data/models/block_type.dart';
+import 'package:ritual/data/models/dated_block_entry.dart';
 import 'package:ritual/data/models/daily_record.dart';
 import 'package:ritual/data/models/day_block.dart';
 import 'package:ritual/data/models/routine.dart';
@@ -63,6 +64,7 @@ class TodayPage extends StatefulWidget {
 class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   List<Routine> routines = [];
   List<DailyRecord> dailyRecords = [];
+  List<DatedBlockEntry> datedBlocks = [];
   Routine? activeRoutine;
 
   static const List<DropdownMenuItem<BlockType>> _blockTypeOptions = [
@@ -77,6 +79,10 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     DropdownMenuItem(
       value: BlockType.visual,
       child: Text('Visual'),
+    ),
+    DropdownMenuItem(
+      value: BlockType.reminder,
+      child: Text('Recordatorio'),
     ),
   ];
 
@@ -124,9 +130,18 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// Regla: si ya se uso la rutina hoy mostramos el registro del dia para
   /// preservar checks e historial. Si aun no se ha usado, mostramos la
   /// plantilla editable sin crear progreso accidentalmente.
+  ///
+  /// Caso funcional: los recordatorios puntuales del dia se mezclan con la
+  /// vista para que el usuario vea su horario real en un solo lugar.
   List<DayBlock> get visibleBlocks {
     if (activeRoutine == null) return const [];
-    return activeDayRecord?.blocks ?? activeRoutine!.blocks;
+    final baseBlocks = activeDayRecord?.blocks ?? activeRoutine!.blocks;
+    final reminderBlocks = getDatedBlocksForDate(todayKey).map((entry) => entry.block);
+
+    return sortBlocksChronologically([
+      ...baseBlocks.map(cloneBlockForDailyRecord),
+      ...reminderBlocks.map(cloneBlockForDailyRecord),
+    ]);
   }
 
   RoutineHistoryInsights get activeRoutineInsights {
@@ -176,6 +191,21 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     return dailyRecords[index];
   }
 
+  List<DatedBlockEntry> getDatedBlocksForDate(String dateKey) {
+    return datedBlocks.where((entry) => entry.dateKey == dateKey).toList();
+  }
+
+  DatedBlockEntry? getDatedBlockEntryById(String blockId) {
+    return datedBlocks.cast<DatedBlockEntry?>().firstWhere(
+          (entry) => entry?.block.id == blockId,
+          orElse: () => null,
+        );
+  }
+
+  bool isReminderBlock(DayBlock block) {
+    return block.type == BlockType.reminder;
+  }
+
   String buildBlockSignature(DayBlock block) {
     return '${block.start}|${block.end}|${block.title.trim().toLowerCase()}';
   }
@@ -205,6 +235,74 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     });
 
     return sortedBlocks;
+  }
+
+  /// Construye el horario esperado para una fecha concreta.
+  ///
+  /// Regla: si ya existe un registro real para esa fecha, ese registro manda.
+  /// Caso borde: si todavia no hay registro, usamos la plantilla de la rutina
+  /// solo cuando aplica para esa fecha y luego mezclamos recordatorios
+  /// puntuales asociados al mismo dia.
+  List<DayBlock> getPlannedBlocksForDate(DateTime date) {
+    if (activeRoutine == null) return const [];
+
+    final dateKey = DateKey.fromDate(date);
+    final record = getRoutineRecordForDate(date);
+    final shouldUseTemplate =
+        record == null &&
+        (isSameCalendarDay(date, todayDate) || activeRoutine!.appliesOn(date));
+    final routineBlocks = record?.blocks ?? (shouldUseTemplate ? activeRoutine!.blocks : <DayBlock>[]);
+    final reminderBlocks = getDatedBlocksForDate(dateKey).map((entry) => entry.block);
+
+    return sortBlocksChronologically([
+      ...routineBlocks.map(cloneBlockForDailyRecord),
+      ...reminderBlocks.map(cloneBlockForDailyRecord),
+    ]);
+  }
+
+  /// Pide confirmacion cuando un bloque choca con otro en el mismo horario.
+  ///
+  /// Regla: los traslapes no se bloquean por completo porque a veces el
+  /// usuario quiere mantener ambas cosas, pero siempre los avisamos antes de
+  /// guardar para que la decision sea consciente.
+  Future<bool> confirmOverlapIfNeeded({
+    required DayBlock candidateBlock,
+    required List<DayBlock> comparisonBlocks,
+    DayBlock? blockBeingEdited,
+    required String scopeLabel,
+  }) async {
+    final hasOverlap = DayBlockTimeValidator.hasOverlap(
+      start: candidateBlock.start,
+      end: candidateBlock.end,
+      existingBlocks: comparisonBlocks,
+      blockBeingEdited: blockBeingEdited,
+    );
+
+    if (!hasOverlap) return true;
+
+    final shouldSave = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Bloque traslapado'),
+          content: Text(
+            'Este bloque choca con otro dentro de $scopeLabel. Puedes guardarlo de todas formas si quieres mantener ambos.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Guardar de todas formas'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return shouldSave == true;
   }
 
   /// Construye el registro resultante cuando el usuario cambia de rutina hoy.
@@ -300,8 +398,10 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   Future<void> loadData() async {
     final savedRoutines = await StorageService.loadRoutines();
     final savedDailyRecords = await StorageService.loadDailyRecords();
+    final savedDatedBlocks = await StorageService.loadDatedBlocks();
 
     dailyRecords = savedDailyRecords;
+    datedBlocks = savedDatedBlocks;
 
     if (savedRoutines.isEmpty) {
       routines = [
@@ -469,6 +569,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     setState(() {});
   }
 
+  Future<void> saveDatedBlocksAndRefresh() async {
+    await StorageService.saveDatedBlocks(datedBlocks);
+
+    if (!mounted) return;
+    setState(() {});
+  }
+
   Future<void> saveRoutinesAndRefresh() async {
     await StorageService.saveRoutines(routines);
 
@@ -482,11 +589,28 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
     }
 
+    final block = visibleBlocks[index];
+
+    if (isReminderBlock(block)) {
+      final reminderEntry = getDatedBlockEntryById(block.id);
+      if (reminderEntry == null) return;
+
+      setState(() {
+        reminderEntry.block.isDone = !reminderEntry.block.isDone;
+      });
+
+      await saveDatedBlocksAndRefresh();
+      return;
+    }
+
     final currentRecord = activeDayRecord;
     if (currentRecord == null) return;
+    final recordIndex = getTodayBlockIndexById(block.id);
+    if (recordIndex == -1) return;
 
     setState(() {
-      currentRecord.blocks[index].isDone = !currentRecord.blocks[index].isDone;
+      currentRecord.blocks[recordIndex].isDone =
+          !currentRecord.blocks[recordIndex].isDone;
     });
 
     await StorageService.saveDailyRecords(dailyRecords);
@@ -1316,14 +1440,19 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   ///
   /// Si [existingBlock] viene informado, el formulario se precarga y al guardar
   /// devolvemos un bloque actualizado. Si no, se crea uno nuevo desde cero.
-  Future<DayBlock?> showBlockForm({DayBlock? existingBlock}) async {
+  Future<DayBlock?> showBlockForm({
+    DayBlock? existingBlock,
+    BlockType initialType = BlockType.habit,
+    bool initialCountsTowardProgress = true,
+  }) async {
     final formKey = GlobalKey<FormState>();
-    var selectedType = existingBlock?.type ?? BlockType.habit;
+    var selectedType = existingBlock?.type ?? initialType;
     var start = existingBlock?.start ?? '';
     var end = existingBlock?.end ?? '';
     var title = existingBlock?.title ?? '';
     var description = existingBlock?.description ?? '';
-    var countsTowardProgress = existingBlock?.countsTowardProgress ?? true;
+    var countsTowardProgress =
+        existingBlock?.countsTowardProgress ?? initialCountsTowardProgress;
 
     return showDialog<DayBlock>(
       context: context,
@@ -1356,11 +1485,10 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
               });
             }
 
-            final timeValidationMessage = DayBlockTimeValidator.validateTimeRange(
+            final timeValidationMessage =
+                DayBlockTimeValidator.validateBasicTimeRange(
               start: start,
               end: end,
-              existingBlocks: visibleBlocks,
-              blockBeingEdited: existingBlock,
             );
 
             return AlertDialog(
@@ -1498,31 +1626,35 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                 FilledButton(
                   onPressed: () {
                     final isValid = formKey.currentState?.validate() ?? false;
-                    final timeValidationMessage =
-                        DayBlockTimeValidator.validateTimeRange(
-                          start: start,
-                          end: end,
-                          existingBlocks: visibleBlocks,
-                          blockBeingEdited: existingBlock,
-                        );
+                    final basicTimeValidationMessage =
+                        DayBlockTimeValidator.validateBasicTimeRange(
+                      start: start,
+                      end: end,
+                    );
 
-                    if (!isValid || timeValidationMessage != null) {
+                    if (!isValid || basicTimeValidationMessage != null) {
                       setDialogState(() {});
                       return;
                     }
 
-                    Navigator.of(context).pop(
-                      DayBlock(
-                        id: existingBlock?.id,
-                        start: start.trim(),
-                        end: end.trim(),
-                        title: title.trim(),
-                        description: description.trim(),
-                        type: selectedType,
-                        countsTowardProgress: countsTowardProgress,
-                        isDone: existingBlock?.isDone ?? false,
-                      ),
-                    );
+                    Future<void> finishSave() async {
+                      if (!mounted) return;
+
+                      Navigator.of(context).pop(
+                        DayBlock(
+                          id: existingBlock?.id,
+                          start: start.trim(),
+                          end: end.trim(),
+                          title: title.trim(),
+                          description: description.trim(),
+                          type: selectedType,
+                          countsTowardProgress: countsTowardProgress,
+                          isDone: existingBlock?.isDone ?? false,
+                        ),
+                      );
+                    }
+
+                    finishSave();
                   },
                   child: Text(existingBlock == null ? 'Guardar' : 'Actualizar'),
                 ),
@@ -1558,6 +1690,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
       final record = activeDayRecord;
       if (record == null) return;
+      final shouldSave = await confirmOverlapIfNeeded(
+        candidateBlock: createdBlock,
+        comparisonBlocks: visibleBlocks,
+        scopeLabel: 'el horario de hoy',
+      );
+      if (!shouldSave) return;
 
       final sortedBlocks = sortBlocksChronologically([
         ...record.blocks,
@@ -1574,6 +1712,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       return;
     }
 
+    final shouldSave = await confirmOverlapIfNeeded(
+      candidateBlock: createdBlock,
+      comparisonBlocks: activeRoutine!.blocks,
+      scopeLabel: 'la plantilla de la rutina',
+    );
+    if (!shouldSave) return;
+
     final sortedRoutineBlocks = sortBlocksChronologically([
       ...activeRoutine!.blocks,
       createdBlock,
@@ -1588,11 +1733,108 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     await saveRoutinesAndRefresh();
   }
 
+  /// Crea un bloque puntual para una fecha especifica sin modificar la rutina.
+  Future<void> createDatedReminderForDate(DateTime date) async {
+    final createdBlock = await showBlockForm(
+      initialType: BlockType.reminder,
+      initialCountsTowardProgress: false,
+    );
+
+    if (createdBlock == null) return;
+
+    final shouldSave = await confirmOverlapIfNeeded(
+      candidateBlock: createdBlock,
+      comparisonBlocks: getPlannedBlocksForDate(date),
+      scopeLabel:
+          isSameCalendarDay(date, todayDate) ? 'el horario de hoy' : 'esa fecha',
+    );
+    if (!shouldSave) return;
+
+    final normalizedDateKey = DateKey.fromDate(date);
+    final reminderBlock = createdBlock.copyWith(
+      id: 'reminder-${createdBlock.id}',
+      type: BlockType.reminder,
+      countsTowardProgress: createdBlock.countsTowardProgress,
+      isDone: false,
+    );
+
+    final updatedEntries = [
+      ...getDatedBlocksForDate(normalizedDateKey),
+      DatedBlockEntry(
+        dateKey: normalizedDateKey,
+        block: reminderBlock,
+      ),
+    ];
+    final sortedEntries = sortBlocksChronologically(
+      updatedEntries.map((entry) => entry.block).toList(),
+    );
+
+    setState(() {
+      datedBlocks.removeWhere((entry) => entry.dateKey == normalizedDateKey);
+      datedBlocks.addAll(
+        sortedEntries.map(
+          (block) => DatedBlockEntry(
+            dateKey: normalizedDateKey,
+            block: block,
+          ),
+        ),
+      );
+    });
+
+    await saveDatedBlocksAndRefresh();
+  }
+
   /// Edita un bloque existente reemplazandolo por una nueva version.
   Future<void> editBlock(int index) async {
     if (activeRoutine == null) return;
 
     final block = visibleBlocks[index];
+
+    if (isReminderBlock(block)) {
+      final reminderEntry = getDatedBlockEntryById(block.id);
+      if (reminderEntry == null) return;
+
+      final updatedBlock = await showBlockForm(existingBlock: reminderEntry.block);
+      if (updatedBlock == null) return;
+      final shouldSave = await confirmOverlapIfNeeded(
+        candidateBlock: updatedBlock,
+        comparisonBlocks: getPlannedBlocksForDate(
+          DateKey.toDate(reminderEntry.dateKey),
+        ),
+        blockBeingEdited: reminderEntry.block,
+        scopeLabel: isSameCalendarDay(
+          DateKey.toDate(reminderEntry.dateKey),
+          todayDate,
+        )
+            ? 'el horario de hoy'
+            : 'esa fecha',
+      );
+      if (!shouldSave) return;
+
+      final reminderDateKey = reminderEntry.dateKey;
+      final updatedEntries = getDatedBlocksForDate(reminderDateKey)
+          .map((entry) => entry.block.id == block.id
+              ? updatedBlock.copyWith(type: BlockType.reminder)
+              : entry.block)
+          .toList();
+      final sortedBlocks = sortBlocksChronologically(updatedEntries);
+
+      setState(() {
+        datedBlocks.removeWhere((entry) => entry.dateKey == reminderDateKey);
+        datedBlocks.addAll(
+          sortedBlocks.map(
+            (sortedBlock) => DatedBlockEntry(
+              dateKey: reminderDateKey,
+              block: sortedBlock,
+            ),
+          ),
+        );
+      });
+
+      await saveDatedBlocksAndRefresh();
+      return;
+    }
+
     final updatedBlock = await showBlockForm(existingBlock: block);
 
     if (updatedBlock == null) return;
@@ -1614,6 +1856,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
       final record = activeDayRecord;
       if (record == null) return;
+      final shouldSave = await confirmOverlapIfNeeded(
+        candidateBlock: updatedBlock,
+        comparisonBlocks: visibleBlocks,
+        blockBeingEdited: block,
+        scopeLabel: 'el horario de hoy',
+      );
+      if (!shouldSave) return;
       final recordIndex = getTodayBlockIndexById(block.id);
       if (recordIndex == -1) return;
 
@@ -1633,6 +1882,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     final routineIndex = getRoutineBlockIndexById(block.id);
     if (routineIndex == -1) return;
+    final shouldSave = await confirmOverlapIfNeeded(
+      candidateBlock: updatedBlock,
+      comparisonBlocks: activeRoutine!.blocks,
+      blockBeingEdited: block,
+      scopeLabel: 'la plantilla de la rutina',
+    );
+    if (!shouldSave) return;
 
     final updatedRoutineBlocks = [...activeRoutine!.blocks];
     updatedRoutineBlocks[routineIndex] = updatedBlock.copyWith(isDone: false);
@@ -1651,6 +1907,18 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   Future<void> deleteBlock(int index) async {
     if (activeRoutine == null) return;
     final block = visibleBlocks[index];
+
+    if (isReminderBlock(block)) {
+      final reminderEntry = getDatedBlockEntryById(block.id);
+      if (reminderEntry == null) return;
+
+      setState(() {
+        datedBlocks.remove(reminderEntry);
+      });
+
+      await saveDatedBlocksAndRefresh();
+      return;
+    }
 
     final scope = await showBlockChangeScopeDialog(
       title: 'Eliminar bloque',
@@ -2106,11 +2374,15 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   }) {
     final theme = Theme.of(context);
     final record = getRoutineRecordForDate(day);
+    final datedEntries = getDatedBlocksForDate(DateKey.fromDate(day));
     final isInVisibleMonth = day.month == visibleMonth.month;
     final isToday = isSameCalendarDay(day, todayDate);
     final isFuture = isFutureCalendarDay(day);
-    final hasScheduledRoutine = activeRoutine?.appliesOn(day) ?? false;
-    final hasActivity = record?.hasAnyCompletedBlocks ?? false;
+    final hasScheduledRoutine =
+        (activeRoutine?.appliesOn(day) ?? false) || datedEntries.isNotEmpty;
+    final hasActivity =
+        (record?.hasAnyCompletedBlocks ?? false) ||
+        datedEntries.any((entry) => entry.block.isDone);
     final isCompletedDay = record?.isCompletedDay ?? false;
     final markerColor =
         isCompletedDay ? const Color(0xFFFFA24D) : const Color(0xFF4DA3FF);
@@ -2175,12 +2447,33 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (activeRoutine == null) return;
 
     final record = getRoutineRecordForDate(date);
-    final hasScheduledRoutine = activeRoutine!.appliesOn(date);
+    final datedEntries = getDatedBlocksForDate(DateKey.fromDate(date));
+    final datedBlocksForDate = datedEntries.map((entry) => entry.block).toList();
+    final recordAndReminderBlocks = record == null
+        ? <DayBlock>[]
+        : sortBlocksChronologically([
+            ...record.blocks,
+            ...datedBlocksForDate.map(cloneBlockForDailyRecord),
+          ]);
+    final hasScheduledRoutine =
+        activeRoutine!.appliesOn(date) || datedBlocksForDate.isNotEmpty;
     final isFuture = isFutureCalendarDay(date);
     final previewBlocks = activeRoutine!.blocks
         .map((block) => cloneBlockForDailyRecord(block))
         .toList();
-    final progress = record == null ? 0.0 : getRecordProgress(record);
+    final previewAndReminderBlocks = sortBlocksChronologically([
+      ...previewBlocks,
+      ...datedBlocksForDate.map(cloneBlockForDailyRecord),
+    ]);
+    final progressEligibleBlocks = recordAndReminderBlocks
+        .where((block) => block.countsTowardProgress)
+        .toList();
+    final progress = record == null
+        ? 0.0
+        : progressEligibleBlocks.isEmpty
+            ? 0.0
+            : progressEligibleBlocks.where((block) => block.isDone).length /
+                progressEligibleBlocks.length;
     final progressColor = record == null
         ? getCalendarPreviewColor(hasScheduledRoutine: hasScheduledRoutine)
         : record.isCompletedDay
@@ -2251,7 +2544,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         ),
                         Chip(
                           avatar: const Icon(Icons.task_alt_outlined, size: 18),
-                          label: Text('${record.completedBlocksCount} completados'),
+                          label: Text(
+                            '${recordAndReminderBlocks.where((block) => block.isDone).length} completados',
+                          ),
                         ),
                       ],
                     )
@@ -2268,7 +2563,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         Chip(
                           avatar:
                               const Icon(Icons.view_list_rounded, size: 18),
-                          label: Text('${previewBlocks.length} bloques'),
+                          label: Text('${previewAndReminderBlocks.length} bloques'),
                         ),
                       ],
                     )
@@ -2287,10 +2582,32 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                       backgroundColor: Colors.white12,
                     ),
                   ),
+                  if (!DateTime(date.year, date.month, date.day).isBefore(
+                    DateTime(todayDate.year, todayDate.month, todayDate.day),
+                  )) ...[
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: FilledButton.tonalIcon(
+                        onPressed: () async {
+                          Navigator.of(context).pop();
+                          await createDatedReminderForDate(date);
+                          if (!mounted) return;
+                          await showCalendarDateDetails(date);
+                        },
+                        icon: const Icon(Icons.add_alert_rounded),
+                        label: Text(
+                          isFuture
+                              ? 'Agregar recordatorio para esta fecha'
+                              : 'Agregar bloque puntual para hoy',
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 18),
                   Expanded(
                     child: record != null
-                        ? (record.blocks.isEmpty
+                        ? (recordAndReminderBlocks.isEmpty
                             ? Center(
                                 child: Text(
                                   'Este dia no tuvo bloques registrados.',
@@ -2300,9 +2617,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                 ),
                               )
                             : ListView.builder(
-                                itemCount: record.blocks.length,
+                                itemCount: recordAndReminderBlocks.length,
                                 itemBuilder: (context, index) {
-                                  final block = record.blocks[index];
+                                  final block = recordAndReminderBlocks[index];
 
                                   return TimeBlock(
                                     start: block.start,
@@ -2317,7 +2634,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                 },
                               ))
                         : hasScheduledRoutine
-                            ? (previewBlocks.isEmpty
+                            ? (previewAndReminderBlocks.isEmpty
                                 ? Center(
                                     child: Text(
                                       'La rutina aplica en esta fecha, pero todavia no tiene bloques.',
@@ -2328,9 +2645,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                     ),
                                   )
                                 : ListView.builder(
-                                    itemCount: previewBlocks.length,
+                                    itemCount: previewAndReminderBlocks.length,
                                     itemBuilder: (context, index) {
-                                      final block = previewBlocks[index];
+                                      final block = previewAndReminderBlocks[index];
 
                                       return TimeBlock(
                                         start: block.start,

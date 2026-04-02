@@ -1,1 +1,1 @@
-enum BlockType { habit, commitment, visual }
+enum BlockType { habit, commitment, visual, reminder }
