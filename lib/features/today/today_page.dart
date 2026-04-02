@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ritual/core/utils/day_block_time_validator.dart';
 import 'package:ritual/data/models/block_type.dart';
 import 'package:ritual/data/models/day_block.dart';
 import 'package:ritual/data/models/routine.dart';
@@ -243,44 +244,13 @@ class _TodayPageState extends State<TodayPage> {
     await StorageService.saveRoutines(routines);
   }
 
-  /// Convierte un texto `HH:mm` en un [TimeOfDay] cuando el formato es valido.
-  TimeOfDay? parseTime(String value) {
-    final parts = value.split(':');
-    if (parts.length != 2) return null;
-
-    final hour = int.tryParse(parts[0]);
-    final minute = int.tryParse(parts[1]);
-
-    if (hour == null || minute == null) return null;
-    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
-
-    return TimeOfDay(hour: hour, minute: minute);
-  }
-
-  /// Da formato consistente `HH:mm` a una hora para mostrarla y persistirla.
-  String formatTimeOfDay(TimeOfDay time) {
-    final hour = time.hour.toString().padLeft(2, '0');
-    final minute = time.minute.toString().padLeft(2, '0');
-    return '$hour:$minute';
-  }
-
-  /// Compara horas para validar que el rango tenga sentido.
-  bool isEndAfterStart(String start, String end) {
-    final startTime = parseTime(start);
-    final endTime = parseTime(end);
-    if (startTime == null || endTime == null) return false;
-
-    final startMinutes = startTime.hour * 60 + startTime.minute;
-    final endMinutes = endTime.hour * 60 + endTime.minute;
-    return endMinutes > startMinutes;
-  }
-
   /// Abre el selector nativo de hora y devuelve el valor ya formateado.
   Future<String?> pickTime({
     required BuildContext context,
     String? initialValue,
   }) async {
-    final initialTime = parseTime(initialValue ?? '') ?? TimeOfDay.now();
+    final initialTime =
+        DayBlockTimeValidator.parseTime(initialValue ?? '') ?? TimeOfDay.now();
 
     final selectedTime = await showTimePicker(
       context: context,
@@ -300,7 +270,7 @@ class _TodayPageState extends State<TodayPage> {
     );
 
     if (selectedTime == null) return null;
-    return formatTimeOfDay(selectedTime);
+    return DayBlockTimeValidator.formatTimeOfDay(selectedTime);
   }
 
   /// Abre el formulario de bloque en modo crear o editar.
@@ -345,6 +315,13 @@ class _TodayPageState extends State<TodayPage> {
                 end = pickedTime;
               });
             }
+
+            final timeValidationMessage = DayBlockTimeValidator.validateTimeRange(
+              start: start,
+              end: end,
+              existingBlocks: activeRoutine?.blocks ?? const [],
+              blockBeingEdited: existingBlock,
+            );
 
             return AlertDialog(
               title: Text(
@@ -426,23 +403,12 @@ class _TodayPageState extends State<TodayPage> {
                           ),
                         ],
                       ),
-                      if (start.isEmpty || end.isEmpty) ...[
+                      if (timeValidationMessage != null) ...[
                         const SizedBox(height: 8),
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Text(
-                            'Selecciona hora de inicio y fin.',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.error,
-                            ),
-                          ),
-                        ),
-                      ] else if (!isEndAfterStart(start, end)) ...[
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'La hora de fin debe ser mayor que la de inicio.',
+                            timeValidationMessage,
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.error,
                             ),
@@ -478,12 +444,15 @@ class _TodayPageState extends State<TodayPage> {
                 FilledButton(
                   onPressed: () {
                     final isValid = formKey.currentState?.validate() ?? false;
-                    final hasValidTimeRange =
-                        start.isNotEmpty &&
-                        end.isNotEmpty &&
-                        isEndAfterStart(start, end);
+                    final timeValidationMessage =
+                        DayBlockTimeValidator.validateTimeRange(
+                          start: start,
+                          end: end,
+                          existingBlocks: activeRoutine?.blocks ?? const [],
+                          blockBeingEdited: existingBlock,
+                        );
 
-                    if (!isValid || !hasValidTimeRange) {
+                    if (!isValid || timeValidationMessage != null) {
                       setDialogState(() {});
                       return;
                     }
