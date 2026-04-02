@@ -363,3 +363,21 @@ Puedes usar estos valores dentro del Excel:
 - `test:` para pruebas
 - `docs:` para documentacion
 - `style:` para cambios visuales menores o de formato
+
+## Actualizacion reciente
+
+Ya quedaron implementadas estas capacidades del roadmap:
+
+- selector, creacion, edicion y eliminacion segura de rutinas
+- creacion, edicion, eliminacion y reordenamiento de bloques
+- validacion de horarios y tests basicos
+- historial diario con reset automatico
+- rachas y estadisticas basicas
+- vista de dias anteriores y detalle de un dia historico
+- vigencia de rutinas con modos `siempre`, `semana actual`, `mes actual` y `rango personalizado`
+
+Siguiente bloque recomendado:
+
+1. avisos de vigencia para rutinas que estan por empezar o terminar
+2. seleccion automatica de la rutina que aplica hoy cuando haya varias vigentes
+3. preferencia por bloque para recibir notificaciones push

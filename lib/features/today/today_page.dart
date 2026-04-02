@@ -6,8 +6,44 @@ import 'package:ritual/data/models/block_type.dart';
 import 'package:ritual/data/models/daily_record.dart';
 import 'package:ritual/data/models/day_block.dart';
 import 'package:ritual/data/models/routine.dart';
+import 'package:ritual/data/models/routine_schedule.dart';
 import 'package:ritual/data/services/storage_service.dart';
 import 'package:ritual/shared/widgets/time_block.dart';
+
+/// Resultado del formulario de rutina.
+///
+/// Separa el borrador de la rutina persistida para no mutar el estado real
+/// mientras el usuario aun esta llenando el dialogo.
+class _RoutineFormResult {
+  final String name;
+  final RoutineSchedule schedule;
+
+  const _RoutineFormResult({
+    required this.name,
+    required this.schedule,
+  });
+}
+
+/// Opciones disponibles cuando el usuario cambia de rutina a mitad del dia.
+///
+/// Las tres estrategias existen porque cada una responde a una intencion
+/// distinta: continuar el dia sumando bloques, cambiar el resto del plan o
+/// reiniciar completamente el horario del dia.
+enum _RoutineSwitchStrategy {
+  preserveAndAdd,
+  replacePending,
+  restartDay,
+}
+
+/// Define a que nivel se aplica un cambio de bloques cuando ya existe un dia.
+///
+/// `todayOnly` modifica solo el registro diario actual. `routineOnly`
+/// modifica la plantilla para los dias futuros sin reescribir el historial ya
+/// consolidado.
+enum _BlockChangeScope {
+  todayOnly,
+  routineOnly,
+}
 
 /// Pantalla principal del MVP.
 ///
@@ -44,7 +80,32 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     ),
   ];
 
-  String get todayKey => DateKey.fromDate(DateTime.now());
+  static const List<DropdownMenuItem<RoutineScheduleType>>
+      _routineScheduleOptions = [
+    DropdownMenuItem(
+      value: RoutineScheduleType.always,
+      child: Text('Siempre'),
+    ),
+    DropdownMenuItem(
+      value: RoutineScheduleType.currentWeek,
+      child: Text('Semana actual'),
+    ),
+    DropdownMenuItem(
+      value: RoutineScheduleType.currentMonth,
+      child: Text('Mes actual'),
+    ),
+    DropdownMenuItem(
+      value: RoutineScheduleType.customRange,
+      child: Text('Rango personalizado'),
+    ),
+  ];
+
+  DateTime get todayDate => DateTime.now();
+
+  String get todayKey => DateKey.fromDate(todayDate);
+
+  bool get isActiveRoutineScheduledToday =>
+      activeRoutine?.appliesOn(todayDate) ?? false;
 
   DailyRecord? get activeDayRecord {
     if (activeRoutine == null) return null;
@@ -58,7 +119,15 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     return dailyRecords[index];
   }
 
-  List<DayBlock> get visibleBlocks => activeDayRecord?.blocks ?? const [];
+  /// La lista visible depende de si hoy ya existe o no un registro diario.
+  ///
+  /// Regla: si ya se uso la rutina hoy mostramos el registro del dia para
+  /// preservar checks e historial. Si aun no se ha usado, mostramos la
+  /// plantilla editable sin crear progreso accidentalmente.
+  List<DayBlock> get visibleBlocks {
+    if (activeRoutine == null) return const [];
+    return activeDayRecord?.blocks ?? activeRoutine!.blocks;
+  }
 
   RoutineHistoryInsights get activeRoutineInsights {
     if (activeRoutine == null) {
@@ -76,6 +145,127 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       records: dailyRecords,
       routineId: activeRoutine!.id,
     );
+  }
+
+  List<DailyRecord> get activeRoutineHistoryRecords {
+    if (activeRoutine == null) return const [];
+
+    final records = dailyRecords
+        .where(
+          (record) =>
+              record.routineId == activeRoutine!.id &&
+              record.dateKey != todayKey,
+        )
+        .toList()
+      ..sort(
+        (a, b) => DateKey.toDate(b.dateKey).compareTo(DateKey.toDate(a.dateKey)),
+      );
+
+    return records;
+  }
+
+  int getTodayRecordIndexForRoutineId(String routineId) {
+    return dailyRecords.indexWhere(
+      (record) => record.dateKey == todayKey && record.routineId == routineId,
+    );
+  }
+
+  DailyRecord? getTodayRecordForRoutineId(String routineId) {
+    final index = getTodayRecordIndexForRoutineId(routineId);
+    if (index == -1) return null;
+    return dailyRecords[index];
+  }
+
+  String buildBlockSignature(DayBlock block) {
+    return '${block.start}|${block.end}|${block.title.trim().toLowerCase()}';
+  }
+
+  int getRoutineBlockIndexById(String blockId) {
+    if (activeRoutine == null) return -1;
+    return activeRoutine!.blocks.indexWhere((block) => block.id == blockId);
+  }
+
+  int getTodayBlockIndexById(String blockId) {
+    final record = activeDayRecord;
+    if (record == null) return -1;
+    return record.blocks.indexWhere((block) => block.id == blockId);
+  }
+
+  List<DayBlock> sortBlocksChronologically(List<DayBlock> blocks) {
+    final sortedBlocks = [...blocks];
+
+    sortedBlocks.sort((a, b) {
+      final aTime = DayBlockTimeValidator.parseTime(a.start);
+      final bTime = DayBlockTimeValidator.parseTime(b.start);
+
+      final aMinutes = aTime == null ? 0 : (aTime.hour * 60) + aTime.minute;
+      final bMinutes = bTime == null ? 0 : (bTime.hour * 60) + bTime.minute;
+
+      return aMinutes.compareTo(bMinutes);
+    });
+
+    return sortedBlocks;
+  }
+
+  /// Construye el registro resultante cuando el usuario cambia de rutina hoy.
+  ///
+  /// Regla: consolidamos el dia en un solo registro para que el historial no
+  /// quede fragmentado por varios cambios de rutina dentro de la misma fecha.
+  List<DayBlock> buildBlocksForRoutineSwitch({
+    required List<DayBlock> currentDayBlocks,
+    required List<DayBlock> nextRoutineBlocks,
+    required _RoutineSwitchStrategy strategy,
+  }) {
+    final currentBlocksBySignature = {
+      for (final block in currentDayBlocks) buildBlockSignature(block): block,
+    };
+    final completedCurrentBlocks = currentDayBlocks
+        .where((block) => block.isDone)
+        .map(cloneBlockForDailyRecord)
+        .toList();
+
+    switch (strategy) {
+      case _RoutineSwitchStrategy.preserveAndAdd:
+        final mergedBlocks = currentDayBlocks.map(cloneBlockForDailyRecord).toList();
+
+        for (final templateBlock in nextRoutineBlocks) {
+          final signature = buildBlockSignature(templateBlock);
+
+          // Caso borde: si ambas rutinas comparten un bloque equivalente,
+          // preservamos el bloque ya existente para no duplicarlo.
+          if (currentBlocksBySignature.containsKey(signature)) {
+            continue;
+          }
+
+          mergedBlocks.add(cloneBlockForDailyRecord(templateBlock));
+        }
+
+        return sortBlocksChronologically(mergedBlocks);
+      case _RoutineSwitchStrategy.replacePending:
+        final keptSignatures = {
+          for (final block in completedCurrentBlocks) buildBlockSignature(block),
+        };
+        final rebuiltBlocks = [...completedCurrentBlocks];
+
+        // Regla: al reemplazar solo el resto del dia conservamos lo ya marcado
+        // y regeneramos lo pendiente desde la nueva rutina.
+        for (final templateBlock in nextRoutineBlocks) {
+          final signature = buildBlockSignature(templateBlock);
+          if (keptSignatures.contains(signature)) {
+            continue;
+          }
+
+          rebuiltBlocks.add(cloneBlockForDailyRecord(templateBlock));
+        }
+
+        return sortBlocksChronologically(rebuiltBlocks);
+      case _RoutineSwitchStrategy.restartDay:
+        // Regla: un reinicio total ignora el progreso previo y crea un nuevo
+        // dia desde la plantilla de la rutina seleccionada.
+        return sortBlocksChronologically(
+          nextRoutineBlocks.map(cloneBlockForDailyRecord).toList(),
+        );
+    }
   }
 
   @override
@@ -119,6 +309,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           id: '1',
           name: 'Normal',
           isActive: true,
+          schedule: const RoutineSchedule.always(),
           blocks: [
             DayBlock(
               id: 'block-english',
@@ -260,7 +451,26 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// Persiste cambios sobre la plantilla y sincroniza el dia actual.
   Future<void> syncActiveRoutineTemplateAndTodayRecord() async {
     await StorageService.saveRoutines(routines);
-    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+
+    // Regla: solo sincronizamos el registro diario si ya existe. Editar una
+    // plantilla no deberia crear por si solo un dia "activo" accidentalmente.
+    if (activeDayRecord != null) {
+      await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+    }
+
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Future<void> saveDailyRecordsAndRefresh() async {
+    await StorageService.saveDailyRecords(dailyRecords);
+
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Future<void> saveRoutinesAndRefresh() async {
+    await StorageService.saveRoutines(routines);
 
     if (!mounted) return;
     setState(() {});
@@ -268,6 +478,10 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
   /// Marca o desmarca un bloque del registro diario activo y persiste el cambio.
   Future<void> toggleBlock(int index) async {
+    if (activeDayRecord == null) {
+      await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+    }
+
     final currentRecord = activeDayRecord;
     if (currentRecord == null) return;
 
@@ -278,12 +492,299 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     await StorageService.saveDailyRecords(dailyRecords);
   }
 
+  /// Explica al usuario como debe transformarse el plan del dia al cambiar
+  /// desde una rutina hacia otra.
+  Future<_RoutineSwitchStrategy?> showRoutineSwitchDialog({
+    required Routine previousRoutine,
+    required Routine nextRoutine,
+  }) {
+    return showModalBottomSheet<_RoutineSwitchStrategy>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+
+        Widget buildStrategyTile({
+          required _RoutineSwitchStrategy strategy,
+          required IconData icon,
+          required String title,
+          required String description,
+          required Color color,
+        }) {
+          return Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () => Navigator.of(context).pop(strategy),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(icon, color: color),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            description,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Cambiar rutina de hoy',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Vas a pasar de "${previousRoutine.name}" a "${nextRoutine.name}". Elige como quieres transformar el horario de hoy.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.white70,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                buildStrategyTile(
+                  strategy: _RoutineSwitchStrategy.preserveAndAdd,
+                  icon: Icons.merge_type_rounded,
+                  color: const Color(0xFF4DA3FF),
+                  title: 'Mantener lo hecho y agregar lo nuevo',
+                  description:
+                      'Conserva todos los bloques actuales, incluidos los completados y pendientes, y agrega los bloques que falten de la nueva rutina.',
+                ),
+                buildStrategyTile(
+                  strategy: _RoutineSwitchStrategy.replacePending,
+                  icon: Icons.update_rounded,
+                  color: const Color(0xFF41C47B),
+                  title: 'Mantener lo hecho y reemplazar lo pendiente',
+                  description:
+                      'Deja intacto lo ya completado y reemplaza el resto del dia con la nueva rutina. Es util si cambiaste de plan a mitad del dia.',
+                ),
+                buildStrategyTile(
+                  strategy: _RoutineSwitchStrategy.restartDay,
+                  icon: Icons.restart_alt_rounded,
+                  color: const Color(0xFFFFA24D),
+                  title: 'Reiniciar el dia con la nueva rutina',
+                  description:
+                      'Descarta el plan actual de hoy y crea uno nuevo desde cero con la rutina seleccionada.',
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Permite decidir si un cambio de bloques afecta solo hoy o la plantilla.
+  Future<_BlockChangeScope?> showBlockChangeScopeDialog({
+    required String title,
+    required String todayOnlyDescription,
+    required String routineOnlyDescription,
+  }) {
+    return showModalBottomSheet<_BlockChangeScope>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+
+        Widget buildScopeTile({
+          required _BlockChangeScope scope,
+          required IconData icon,
+          required String tileTitle,
+          required String description,
+          required Color color,
+        }) {
+          return Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () => Navigator.of(context).pop(scope),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(icon, color: color),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            tileTitle,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            description,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Como ya existe un dia en curso, elige si este cambio debe afectar solo hoy o la rutina base para los proximos dias.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.white70,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                buildScopeTile(
+                  scope: _BlockChangeScope.todayOnly,
+                  icon: Icons.today_rounded,
+                  color: const Color(0xFF4DA3FF),
+                  tileTitle: 'Solo hoy',
+                  description: todayOnlyDescription,
+                ),
+                buildScopeTile(
+                  scope: _BlockChangeScope.routineOnly,
+                  icon: Icons.event_repeat_rounded,
+                  color: const Color(0xFF41C47B),
+                  tileTitle: 'Toda la rutina',
+                  description: routineOnlyDescription,
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   /// Cambia cual rutina esta activa.
   ///
   /// La regla de negocio aqui es simple: solo puede existir una rutina activa
-  /// a la vez.
+  /// a la vez. Si la nueva rutina aun no tiene registro para hoy, pedimos una
+  /// estrategia de transicion para decidir como transformar el plan del dia.
   Future<void> selectRoutine(Routine selectedRoutine) async {
     if (activeRoutine?.id == selectedRoutine.id) return;
+
+    final previousRoutine = activeRoutine;
+    final previousRecord = previousRoutine == null
+        ? null
+        : getTodayRecordForRoutineId(previousRoutine.id);
+    final selectedRoutineRecord = getTodayRecordForRoutineId(selectedRoutine.id);
+
+    if (previousRoutine != null && selectedRoutineRecord == null) {
+      final currentSourceBlocks =
+          previousRecord?.blocks ??
+          previousRoutine.blocks.map(cloneBlockForDailyRecord).toList();
+      final strategy = await showRoutineSwitchDialog(
+        previousRoutine: previousRoutine,
+        nextRoutine: selectedRoutine,
+      );
+
+      if (strategy == null) return;
+
+      final transitionedBlocks = buildBlocksForRoutineSwitch(
+        currentDayBlocks: currentSourceBlocks,
+        nextRoutineBlocks: selectedRoutine.blocks,
+        strategy: strategy,
+      );
+
+      setState(() {
+        // Regla del MVP: un cambio de rutina consolida el dia actual en un
+        // solo registro para que el calendario del dia no quede fragmentado.
+        dailyRecords.removeWhere((record) => record.dateKey == todayKey);
+        dailyRecords.add(
+          DailyRecord(
+            dateKey: todayKey,
+            routineId: selectedRoutine.id,
+            routineName: selectedRoutine.name,
+            blocks: transitionedBlocks,
+          ),
+        );
+      });
+
+      await StorageService.saveDailyRecords(dailyRecords);
+    }
 
     setState(() {
       for (final routine in routines) {
@@ -294,58 +795,372 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     });
 
     await StorageService.saveRoutines(routines);
-    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+
+    // Caso borde: si la rutina seleccionada ya tenia un registro para hoy,
+    // lo resincronizamos con su plantilla actual. Si no, solo la mostramos.
+    if (getTodayRecordForRoutineId(selectedRoutine.id) != null) {
+      await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+    }
 
     if (!mounted) return;
     setState(() {});
   }
 
-  /// Crea una nueva rutina vacia y la deja como rutina activa.
-  Future<void> createRoutine() async {
-    var draftName = '';
+  /// Abre el selector nativo de fecha y devuelve la clave ya normalizada.
+  Future<String?> pickDateKey({
+    required BuildContext context,
+    String? initialDateKey,
+  }) async {
+    final initialDate =
+        initialDateKey != null ? DateKey.toDate(initialDateKey) : todayDate;
 
-    final routineName = await showDialog<String>(
+    final pickedDate = await showDatePicker(
       context: context,
-      builder: (context) {
+      initialDate: initialDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+      builder: (context, child) {
         final theme = Theme.of(context);
 
-        return AlertDialog(
-          title: const Text('Nueva rutina'),
-          content: TextField(
-            autofocus: true,
-            textInputAction: TextInputAction.done,
-            decoration: const InputDecoration(
-              labelText: 'Nombre',
-              hintText: 'Ej. Vacaciones',
+        return Theme(
+          data: theme.copyWith(
+            datePickerTheme: DatePickerThemeData(
+              backgroundColor: theme.colorScheme.surface,
             ),
-            onChanged: (value) => draftName = value,
-            onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(
-                'Cancelar',
-                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-              ),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(draftName.trim()),
-              child: const Text('Crear'),
-            ),
-          ],
+          child: child!,
         );
       },
     );
 
-    final normalizedName = routineName?.trim() ?? '';
-    if (normalizedName.isEmpty) return;
+    if (pickedDate == null) return null;
+    return DateKey.fromDate(pickedDate);
+  }
+
+  /// Valida el borrador de vigencia de una rutina.
+  ///
+  /// Regla: un rango personalizado siempre debe tener fecha inicial.
+  /// Caso borde: si existe fecha final, no puede ser anterior a la inicial.
+  String? validateRoutineScheduleDraft({
+    required RoutineScheduleType type,
+    required String? startDateKey,
+    required String? endDateKey,
+  }) {
+    if (type != RoutineScheduleType.customRange) return null;
+    if (startDateKey == null || startDateKey.isEmpty) {
+      return 'Selecciona una fecha de inicio.';
+    }
+
+    if (endDateKey == null || endDateKey.isEmpty) return null;
+
+    final start = DateKey.toDate(startDateKey);
+    final end = DateKey.toDate(endDateKey);
+
+    if (end.isBefore(start)) {
+      return 'La fecha final no puede ser anterior a la fecha inicial.';
+    }
+
+    return null;
+  }
+
+  /// Construye la configuracion de vigencia real a partir del formulario.
+  RoutineSchedule buildRoutineScheduleFromDraft({
+    required RoutineScheduleType type,
+    required String? startDateKey,
+    required String? endDateKey,
+  }) {
+    switch (type) {
+      case RoutineScheduleType.always:
+        return const RoutineSchedule.always();
+      case RoutineScheduleType.currentWeek:
+        return RoutineSchedule.currentWeek(anchorDate: todayDate);
+      case RoutineScheduleType.currentMonth:
+        return RoutineSchedule.currentMonth(anchorDate: todayDate);
+      case RoutineScheduleType.customRange:
+        return RoutineSchedule.customRange(
+          startDateKey: startDateKey!,
+          endDateKey:
+              endDateKey == null || endDateKey.isEmpty ? null : endDateKey,
+        );
+    }
+  }
+
+  /// Abre el formulario para crear o editar una rutina.
+  Future<_RoutineFormResult?> showRoutineForm({Routine? existingRoutine}) async {
+    final formKey = GlobalKey<FormState>();
+    var name = existingRoutine?.name ?? '';
+    var scheduleType =
+        existingRoutine?.schedule.type ?? RoutineScheduleType.always;
+    var customStartDateKey = existingRoutine?.schedule.startDateKey;
+    var customEndDateKey = existingRoutine?.schedule.endDateKey;
+
+    return showDialog<_RoutineFormResult>(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final scheduleValidationMessage = validateRoutineScheduleDraft(
+              type: scheduleType,
+              startDateKey: customStartDateKey,
+              endDateKey: customEndDateKey,
+            );
+
+            final previewSchedule = buildRoutineScheduleFromDraft(
+              type: scheduleType,
+              startDateKey: customStartDateKey ?? todayKey,
+              endDateKey: customEndDateKey,
+            );
+
+            Future<void> handlePickStartDate() async {
+              final pickedDateKey = await pickDateKey(
+                context: context,
+                initialDateKey: customStartDateKey,
+              );
+              if (pickedDateKey == null) return;
+
+              setDialogState(() {
+                customStartDateKey = pickedDateKey;
+
+                // Caso borde: si la fecha final quedo antes de la nueva fecha
+                // inicial, la limpiamos para forzar una seleccion valida.
+                if (customEndDateKey != null &&
+                    DateKey.toDate(customEndDateKey!)
+                        .isBefore(DateKey.toDate(pickedDateKey))) {
+                  customEndDateKey = null;
+                }
+              });
+            }
+
+            Future<void> handlePickEndDate() async {
+              final pickedDateKey = await pickDateKey(
+                context: context,
+                initialDateKey: customEndDateKey ?? customStartDateKey,
+              );
+              if (pickedDateKey == null) return;
+
+              setDialogState(() {
+                customEndDateKey = pickedDateKey;
+              });
+            }
+
+            return AlertDialog(
+              title: Text(
+                existingRoutine == null ? 'Nueva rutina' : 'Editar rutina',
+              ),
+              content: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextFormField(
+                        initialValue: name,
+                        autofocus: true,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'Nombre',
+                          hintText: 'Ej. Vacaciones o Semana de enfoque',
+                        ),
+                        onChanged: (value) => name = value,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Ingresa un nombre para la rutina.';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<RoutineScheduleType>(
+                        initialValue: scheduleType,
+                        decoration: const InputDecoration(
+                          labelText: 'Vigencia',
+                        ),
+                        items: _routineScheduleOptions,
+                        onChanged: (value) {
+                          if (value == null) return;
+
+                          setDialogState(() {
+                            scheduleType = value;
+
+                            // Regla: los modos predefinidos no dependen de
+                            // fechas manuales, asi que limpiamos el borrador.
+                            if (value != RoutineScheduleType.customRange) {
+                              customStartDateKey = null;
+                              customEndDateKey = null;
+                            }
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      if (scheduleType == RoutineScheduleType.customRange) ...[
+                        Row(
+                          children: [
+                            Expanded(
+                              child: InkWell(
+                                onTap: handlePickStartDate,
+                                borderRadius: BorderRadius.circular(12),
+                                child: InputDecorator(
+                                  decoration: const InputDecoration(
+                                    labelText: 'Fecha inicial',
+                                    suffixIcon:
+                                        Icon(Icons.calendar_today_outlined),
+                                  ),
+                                  child: Text(
+                                    customStartDateKey == null
+                                        ? 'Seleccionar'
+                                        : DateKey.formatForDisplay(
+                                            customStartDateKey!,
+                                          ),
+                                    style: theme.textTheme.bodyLarge?.copyWith(
+                                      color: customStartDateKey == null
+                                          ? Colors.white54
+                                          : null,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: InkWell(
+                                onTap: handlePickEndDate,
+                                borderRadius: BorderRadius.circular(12),
+                                child: InputDecorator(
+                                  decoration: const InputDecoration(
+                                    labelText: 'Fecha final opcional',
+                                    suffixIcon:
+                                        Icon(Icons.event_available_outlined),
+                                  ),
+                                  child: Text(
+                                    customEndDateKey == null
+                                        ? 'Sin fin'
+                                        : DateKey.formatForDisplay(
+                                            customEndDateKey!,
+                                          ),
+                                    style: theme.textTheme.bodyLarge?.copyWith(
+                                      color: customEndDateKey == null
+                                          ? Colors.white54
+                                          : null,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (customEndDateKey != null)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: () {
+                                setDialogState(() {
+                                  customEndDateKey = null;
+                                });
+                              },
+                              icon: const Icon(Icons.clear_rounded),
+                              label: const Text('Quitar fecha final'),
+                            ),
+                          ),
+                      ] else ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.04),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.06),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.date_range_rounded,
+                                color: theme.colorScheme.primary,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  previewSchedule.displayLabel,
+                                  style: theme.textTheme.bodyMedium,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (scheduleValidationMessage != null) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            scheduleValidationMessage,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.error,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(
+                    'Cancelar',
+                    style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final isValid = formKey.currentState?.validate() ?? false;
+                    final scheduleValidationMessage = validateRoutineScheduleDraft(
+                      type: scheduleType,
+                      startDateKey: customStartDateKey,
+                      endDateKey: customEndDateKey,
+                    );
+
+                    if (!isValid || scheduleValidationMessage != null) {
+                      setDialogState(() {});
+                      return;
+                    }
+
+                    Navigator.of(context).pop(
+                      _RoutineFormResult(
+                        name: name.trim(),
+                        schedule: buildRoutineScheduleFromDraft(
+                          type: scheduleType,
+                          startDateKey: customStartDateKey,
+                          endDateKey: customEndDateKey,
+                        ),
+                      ),
+                    );
+                  },
+                  child: Text(existingRoutine == null ? 'Crear' : 'Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Crea una nueva rutina vacia y la deja como rutina activa.
+  Future<void> createRoutine() async {
+    final formResult = await showRoutineForm();
+    if (formResult == null) return;
 
     final newRoutine = Routine(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
-      name: normalizedName,
+      name: formResult.name,
       blocks: [],
       isActive: true,
+      schedule: formResult.schedule,
     );
 
     setState(() {
@@ -358,69 +1173,42 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     });
 
     await StorageService.saveRoutines(routines);
-    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
 
     if (!mounted) return;
     setState(() {});
   }
 
-  /// Permite renombrar una rutina existente sin alterar sus bloques.
-  Future<void> renameRoutine(Routine routine) async {
-    var draftName = routine.name;
+  /// Permite editar nombre y vigencia de una rutina existente.
+  Future<void> editRoutine(Routine routine) async {
+    final formResult = await showRoutineForm(existingRoutine: routine);
+    if (formResult == null) return;
 
-    final routineName = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        final theme = Theme.of(context);
-
-        return AlertDialog(
-          title: const Text('Renombrar rutina'),
-          content: TextFormField(
-            initialValue: routine.name,
-            autofocus: true,
-            textInputAction: TextInputAction.done,
-            decoration: const InputDecoration(
-              labelText: 'Nombre',
-              hintText: 'Ej. Vacaciones',
-            ),
-            onChanged: (value) => draftName = value,
-            onFieldSubmitted: (value) => Navigator.of(context).pop(value.trim()),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(
-                'Cancelar',
-                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-              ),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(draftName.trim()),
-              child: const Text('Guardar'),
-            ),
-          ],
-        );
-      },
-    );
-
-    final normalizedName = routineName?.trim() ?? '';
-    if (normalizedName.isEmpty || normalizedName == routine.name) return;
+    if (formResult.name == routine.name &&
+        formResult.schedule.type == routine.schedule.type &&
+        formResult.schedule.startDateKey == routine.schedule.startDateKey &&
+        formResult.schedule.endDateKey == routine.schedule.endDateKey) {
+      return;
+    }
 
     setState(() {
-      routine.name = normalizedName;
+      routine.name = formResult.name;
+      routine.schedule = formResult.schedule;
 
       // Regla: el historial usa el mismo `routineId`, por lo tanto cuando el
       // nombre cambia lo reflejamos en todos los registros historicos.
       for (final record in dailyRecords.where(
         (record) => record.routineId == routine.id,
       )) {
-        record.routineName = normalizedName;
+        record.routineName = formResult.name;
       }
     });
 
     await StorageService.saveRoutines(routines);
     await StorageService.saveDailyRecords(dailyRecords);
-    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+
+    if (activeRoutine?.id == routine.id && activeDayRecord != null) {
+      await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+    }
 
     if (!mounted) return;
     setState(() {});
@@ -486,7 +1274,10 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     await StorageService.saveRoutines(routines);
     await StorageService.saveDailyRecords(dailyRecords);
-    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+
+    if (activeDayRecord != null) {
+      await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+    }
 
     if (!mounted) return;
     setState(() {});
@@ -568,7 +1359,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
             final timeValidationMessage = DayBlockTimeValidator.validateTimeRange(
               start: start,
               end: end,
-              existingBlocks: activeRoutine?.blocks ?? const [],
+              existingBlocks: visibleBlocks,
               blockBeingEdited: existingBlock,
             );
 
@@ -711,7 +1502,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         DayBlockTimeValidator.validateTimeRange(
                           start: start,
                           end: end,
-                          existingBlocks: activeRoutine?.blocks ?? const [],
+                          existingBlocks: visibleBlocks,
                           blockBeingEdited: existingBlock,
                         );
 
@@ -750,38 +1541,153 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     if (createdBlock == null) return;
 
+    final scope = await showBlockChangeScopeDialog(
+      title: 'Agregar bloque',
+      todayOnlyDescription:
+          'Lo agrega solo al plan de hoy, como un recordatorio puntual o una reunion excepcional.',
+      routineOnlyDescription:
+          'Lo agrega a la plantilla de la rutina para que aparezca en los dias futuros, sin reescribir el historial de hoy.',
+    );
+
+    if (scope == null) return;
+
+    if (scope == _BlockChangeScope.todayOnly) {
+      if (activeDayRecord == null) {
+        await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+      }
+
+      final record = activeDayRecord;
+      if (record == null) return;
+
+      final sortedBlocks = sortBlocksChronologically([
+        ...record.blocks,
+        createdBlock,
+      ]);
+
+      setState(() {
+        record.blocks
+          ..clear()
+          ..addAll(sortedBlocks);
+      });
+
+      await saveDailyRecordsAndRefresh();
+      return;
+    }
+
+    final sortedRoutineBlocks = sortBlocksChronologically([
+      ...activeRoutine!.blocks,
+      createdBlock,
+    ]);
+
     setState(() {
-      activeRoutine!.blocks.add(createdBlock);
+      activeRoutine!.blocks
+        ..clear()
+        ..addAll(sortedRoutineBlocks);
     });
 
-    await syncActiveRoutineTemplateAndTodayRecord();
+    await saveRoutinesAndRefresh();
   }
 
   /// Edita un bloque existente reemplazandolo por una nueva version.
   Future<void> editBlock(int index) async {
     if (activeRoutine == null) return;
 
-    final block = activeRoutine!.blocks[index];
+    final block = visibleBlocks[index];
     final updatedBlock = await showBlockForm(existingBlock: block);
 
     if (updatedBlock == null) return;
 
+    final scope = await showBlockChangeScopeDialog(
+      title: 'Editar bloque',
+      todayOnlyDescription:
+          'Actualiza solo el bloque del dia actual. El historial pasado no cambia y la rutina base queda igual.',
+      routineOnlyDescription:
+          'Actualiza la plantilla de la rutina para los proximos dias sin modificar el plan ya consolidado de hoy.',
+    );
+
+    if (scope == null) return;
+
+    if (scope == _BlockChangeScope.todayOnly) {
+      if (activeDayRecord == null) {
+        await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+      }
+
+      final record = activeDayRecord;
+      if (record == null) return;
+      final recordIndex = getTodayBlockIndexById(block.id);
+      if (recordIndex == -1) return;
+
+      final updatedBlocks = [...record.blocks];
+      updatedBlocks[recordIndex] = updatedBlock;
+      final sortedBlocks = sortBlocksChronologically(updatedBlocks);
+
+      setState(() {
+        record.blocks
+          ..clear()
+          ..addAll(sortedBlocks);
+      });
+
+      await saveDailyRecordsAndRefresh();
+      return;
+    }
+
+    final routineIndex = getRoutineBlockIndexById(block.id);
+    if (routineIndex == -1) return;
+
+    final updatedRoutineBlocks = [...activeRoutine!.blocks];
+    updatedRoutineBlocks[routineIndex] = updatedBlock.copyWith(isDone: false);
+    final sortedRoutineBlocks = sortBlocksChronologically(updatedRoutineBlocks);
+
     setState(() {
-      activeRoutine!.blocks[index] = updatedBlock;
+      activeRoutine!.blocks
+        ..clear()
+        ..addAll(sortedRoutineBlocks);
     });
 
-    await syncActiveRoutineTemplateAndTodayRecord();
+    await saveRoutinesAndRefresh();
   }
 
   /// Elimina un bloque existente de la rutina activa.
   Future<void> deleteBlock(int index) async {
     if (activeRoutine == null) return;
+    final block = visibleBlocks[index];
+
+    final scope = await showBlockChangeScopeDialog(
+      title: 'Eliminar bloque',
+      todayOnlyDescription:
+          'Lo quita solo del dia actual. Es util si hoy surgio un cambio puntual y no quieres tocar la rutina base.',
+      routineOnlyDescription:
+          'Lo quita de la plantilla de la rutina para el futuro, sin modificar lo que ya quedo guardado en dias pasados.',
+    );
+
+    if (scope == null) return;
+
+    if (scope == _BlockChangeScope.todayOnly) {
+      if (activeDayRecord == null) {
+        await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+      }
+
+      final record = activeDayRecord;
+      if (record == null) return;
+      final recordIndex = getTodayBlockIndexById(block.id);
+      if (recordIndex == -1) return;
+
+      setState(() {
+        record.blocks.removeAt(recordIndex);
+      });
+
+      await saveDailyRecordsAndRefresh();
+      return;
+    }
+
+    final routineIndex = getRoutineBlockIndexById(block.id);
+    if (routineIndex == -1) return;
 
     setState(() {
-      activeRoutine!.blocks.removeAt(index);
+      activeRoutine!.blocks.removeAt(routineIndex);
     });
 
-    await syncActiveRoutineTemplateAndTodayRecord();
+    await saveRoutinesAndRefresh();
   }
 
   /// Reordena los bloques de la rutina activa.
@@ -791,17 +1697,874 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// efecto de haber removido primero el item original.
   void reorderBlocks(int oldIndex, int newIndex) {
     if (activeRoutine == null) return;
+    final targetBlocks = activeDayRecord?.blocks ?? activeRoutine!.blocks;
 
     setState(() {
       if (newIndex > oldIndex) {
         newIndex -= 1;
       }
 
-      final movedBlock = activeRoutine!.blocks.removeAt(oldIndex);
-      activeRoutine!.blocks.insert(newIndex, movedBlock);
+      final movedBlock = targetBlocks.removeAt(oldIndex);
+      targetBlocks.insert(newIndex, movedBlock);
     });
 
-    syncActiveRoutineTemplateAndTodayRecord();
+    if (activeDayRecord != null) {
+      saveDailyRecordsAndRefresh();
+      return;
+    }
+
+    saveRoutinesAndRefresh();
+  }
+
+  double getRecordProgress(DailyRecord record) {
+    if (record.progressEligibleBlocksCount == 0) return 0;
+    return record.completedProgressBlocksCount / record.progressEligibleBlocksCount;
+  }
+
+  String buildRecordProgressLabel(DailyRecord record) {
+    if (record.progressEligibleBlocksCount == 0) {
+      return 'Sin bloques medibles';
+    }
+
+    return '${record.completedProgressBlocksCount}/${record.progressEligibleBlocksCount} bloques';
+  }
+
+  Widget buildRecordStatusPill({
+    required BuildContext context,
+    required DailyRecord record,
+  }) {
+    final theme = Theme.of(context);
+    final color = record.isCompletedDay
+        ? const Color(0xFF41C47B)
+        : record.hasAnyCompletedBlocks
+            ? const Color(0xFF4DA3FF)
+            : Colors.white54;
+    final label = record.isCompletedDay
+        ? 'Dia completo'
+        : record.hasAnyCompletedBlocks
+            ? 'Con avance'
+            : 'Sin checks';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: color,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  /// Muestra el detalle de un registro historico concreto.
+  Future<void> showDailyRecordDetails(DailyRecord record) async {
+    final progress = getRecordProgress(record);
+    final progressColor = record.isCompletedDay
+        ? const Color(0xFF41C47B)
+        : progress > 0
+            ? const Color(0xFF4DA3FF)
+            : Colors.white54;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.86,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    DateKey.formatForDisplay(
+                      record.dateKey,
+                      includeWeekday: true,
+                    ),
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${record.routineName} · ${buildRecordProgressLabel(record)}',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.white70,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      buildRecordStatusPill(context: context, record: record),
+                      Chip(
+                        avatar: const Icon(Icons.percent_rounded, size: 18),
+                        label: Text('${(progress * 100).round()}% progreso'),
+                      ),
+                      Chip(
+                        avatar: const Icon(Icons.task_alt_outlined, size: 18),
+                        label: Text('${record.completedBlocksCount} completados'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 10,
+                      valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+                      backgroundColor: Colors.white12,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Expanded(
+                    child: record.blocks.isEmpty
+                        ? Center(
+                            child: Text(
+                              'Este dia no tuvo bloques registrados.',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: Colors.white70,
+                              ),
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: record.blocks.length,
+                            itemBuilder: (context, index) {
+                              final block = record.blocks[index];
+
+                              return TimeBlock(
+                                start: block.start,
+                                end: block.end,
+                                title: block.title,
+                                description: block.description,
+                                type: block.type,
+                                countsTowardProgress: block.countsTowardProgress,
+                                isDone: block.isDone,
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Abre el historial de dias anteriores de la rutina activa.
+  Future<void> showHistorySheet() async {
+    if (activeRoutine == null) return;
+
+    final selectedRecord = await showModalBottomSheet<DailyRecord>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+        final records = activeRoutineHistoryRecords;
+
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.8,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Historial de ${activeRoutine!.name}',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Aqui puedes navegar los dias anteriores y abrir el detalle de cada registro guardado.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.white70,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Expanded(
+                    child: records.isEmpty
+                        ? Center(
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 24),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.history_toggle_off_rounded,
+                                    size: 52,
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                  const SizedBox(height: 14),
+                                  Text(
+                                    'Todavia no hay dias anteriores para esta rutina',
+                                    textAlign: TextAlign.center,
+                                    style: theme.textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Cuando completes bloques en dias distintos, aparecera aqui el historial navegable.',
+                                    textAlign: TextAlign.center,
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        : ListView.separated(
+                            itemCount: records.length,
+                            separatorBuilder: (context, index) =>
+                                const SizedBox(height: 10),
+                            itemBuilder: (context, index) {
+                              final record = records[index];
+                              final progress = getRecordProgress(record);
+
+                              return Card(
+                                child: ListTile(
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  leading: CircleAvatar(
+                                    backgroundColor:
+                                        theme.colorScheme.primary.withValues(
+                                      alpha: 0.18,
+                                    ),
+                                    child: Text(
+                                      DateKey.toDate(record.dateKey)
+                                          .day
+                                          .toString(),
+                                      style:
+                                          theme.textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                  title: Text(
+                                    DateKey.formatForDisplay(
+                                      record.dateKey,
+                                      includeWeekday: true,
+                                    ),
+                                  ),
+                                  subtitle: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const SizedBox(height: 4),
+                                      Text(buildRecordProgressLabel(record)),
+                                      const SizedBox(height: 6),
+                                      LinearProgressIndicator(
+                                        value: progress,
+                                        minHeight: 6,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                          progress >= 1
+                                              ? const Color(0xFF41C47B)
+                                              : const Color(0xFF4DA3FF),
+                                        ),
+                                        backgroundColor: Colors.white12,
+                                      ),
+                                    ],
+                                  ),
+                                  trailing: const Icon(
+                                    Icons.chevron_right_rounded,
+                                  ),
+                                  onTap: () => Navigator.of(context).pop(record),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selectedRecord != null && mounted) {
+      await showDailyRecordDetails(selectedRecord);
+    }
+  }
+
+  DateTime get calendarMonthAnchor {
+    final now = todayDate;
+    return DateTime(now.year, now.month);
+  }
+
+  DateTime getCalendarMonthStart(DateTime monthDate) {
+    return DateTime(monthDate.year, monthDate.month);
+  }
+
+  DateTime getCalendarGridStart(DateTime monthDate) {
+    final monthStart = getCalendarMonthStart(monthDate);
+    return monthStart.subtract(Duration(days: monthStart.weekday - 1));
+  }
+
+  List<DateTime> buildCalendarGridDays(DateTime monthDate) {
+    final gridStart = getCalendarGridStart(monthDate);
+
+    return List.generate(
+      42,
+      (index) => gridStart.add(Duration(days: index)),
+    );
+  }
+
+  DailyRecord? getRoutineRecordForDate(DateTime date) {
+    if (activeRoutine == null) return null;
+
+    final dateKey = DateKey.fromDate(date);
+    return dailyRecords.cast<DailyRecord?>().firstWhere(
+          (record) =>
+              record?.routineId == activeRoutine!.id &&
+              record?.dateKey == dateKey,
+          orElse: () => null,
+        );
+  }
+
+  bool isSameCalendarDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  bool isFutureCalendarDay(DateTime date) {
+    final normalized = DateTime(date.year, date.month, date.day);
+    final today = DateTime(todayDate.year, todayDate.month, todayDate.day);
+    return normalized.isAfter(today);
+  }
+
+  Color getCalendarPreviewColor({required bool hasScheduledRoutine}) {
+    return hasScheduledRoutine ? const Color(0xFF4DA3FF) : Colors.white54;
+  }
+
+  Widget buildCalendarLegendItem({
+    required BuildContext context,
+    required Widget marker,
+    required String label,
+  }) {
+    final theme = Theme.of(context);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        marker,
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: Colors.white70,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget buildCalendarWeekdayCell({
+    required BuildContext context,
+    required String label,
+  }) {
+    final theme = Theme.of(context);
+
+    return Center(
+      child: Text(
+        label,
+        style: theme.textTheme.labelMedium?.copyWith(
+          color: Colors.white60,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget buildCalendarDayTile({
+    required BuildContext context,
+    required DateTime day,
+    required DateTime visibleMonth,
+  }) {
+    final theme = Theme.of(context);
+    final record = getRoutineRecordForDate(day);
+    final isInVisibleMonth = day.month == visibleMonth.month;
+    final isToday = isSameCalendarDay(day, todayDate);
+    final isFuture = isFutureCalendarDay(day);
+    final hasScheduledRoutine = activeRoutine?.appliesOn(day) ?? false;
+    final hasActivity = record?.hasAnyCompletedBlocks ?? false;
+    final isCompletedDay = record?.isCompletedDay ?? false;
+    final markerColor =
+        isCompletedDay ? const Color(0xFFFFA24D) : const Color(0xFF4DA3FF);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () => Navigator.of(context).pop(day),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        decoration: BoxDecoration(
+          color: hasActivity
+              ? markerColor.withValues(alpha: 0.12)
+              : Colors.white.withValues(alpha: 0.02),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: isToday
+                ? theme.colorScheme.primary.withValues(alpha: 0.5)
+                : hasScheduledRoutine && isFuture
+                    ? Colors.white.withValues(alpha: 0.10)
+                    : Colors.white.withValues(alpha: 0.04),
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              day.day.toString(),
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: isInVisibleMonth ? null : Colors.white38,
+              ),
+            ),
+            const SizedBox(height: 6),
+            if (hasActivity)
+              Icon(
+                Icons.local_fire_department_rounded,
+                size: 16,
+                color: markerColor,
+              )
+            else if (hasScheduledRoutine && isFuture)
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.7),
+                  shape: BoxShape.circle,
+                ),
+              )
+            else
+              const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Abre el detalle de una fecha concreta desde el calendario.
+  ///
+  /// La hoja resuelve tres estados: registro real, vista previa futura o un
+  /// mensaje vacio cuando no hay una rutina asociada a esa fecha.
+  Future<void> showCalendarDateDetails(DateTime date) async {
+    if (activeRoutine == null) return;
+
+    final record = getRoutineRecordForDate(date);
+    final hasScheduledRoutine = activeRoutine!.appliesOn(date);
+    final isFuture = isFutureCalendarDay(date);
+    final previewBlocks = activeRoutine!.blocks
+        .map((block) => cloneBlockForDailyRecord(block))
+        .toList();
+    final progress = record == null ? 0.0 : getRecordProgress(record);
+    final progressColor = record == null
+        ? getCalendarPreviewColor(hasScheduledRoutine: hasScheduledRoutine)
+        : record.isCompletedDay
+            ? const Color(0xFF41C47B)
+            : progress > 0
+                ? const Color(0xFF4DA3FF)
+                : Colors.white54;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.86,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    DateKey.formatForDisplay(
+                      DateKey.fromDate(date),
+                      includeWeekday: true,
+                    ),
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (record != null)
+                    Text(
+                      '${record.routineName} | ${buildRecordProgressLabel(record)}',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    )
+                  else if (hasScheduledRoutine)
+                    Text(
+                      isFuture
+                          ? 'Vista previa de ${activeRoutine!.name} para esta fecha'
+                          : 'No hay registro guardado, pero esta rutina aplica en esta fecha',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    )
+                  else
+                    Text(
+                      'No hay una rutina configurada para esta fecha.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    ),
+                  const SizedBox(height: 14),
+                  if (record != null)
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        buildRecordStatusPill(context: context, record: record),
+                        Chip(
+                          avatar: const Icon(Icons.percent_rounded, size: 18),
+                          label: Text('${(progress * 100).round()}% progreso'),
+                        ),
+                        Chip(
+                          avatar: const Icon(Icons.task_alt_outlined, size: 18),
+                          label: Text('${record.completedBlocksCount} completados'),
+                        ),
+                      ],
+                    )
+                  else if (hasScheduledRoutine)
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        Chip(
+                          avatar:
+                              const Icon(Icons.visibility_outlined, size: 18),
+                          label: Text(isFuture ? 'Vista previa' : 'Sin registro'),
+                        ),
+                        Chip(
+                          avatar:
+                              const Icon(Icons.view_list_rounded, size: 18),
+                          label: Text('${previewBlocks.length} bloques'),
+                        ),
+                      ],
+                    )
+                  else
+                    const Chip(
+                      avatar: Icon(Icons.info_outline_rounded, size: 18),
+                      label: Text('Sin plan para este dia'),
+                    ),
+                  const SizedBox(height: 16),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 10,
+                      valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+                      backgroundColor: Colors.white12,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Expanded(
+                    child: record != null
+                        ? (record.blocks.isEmpty
+                            ? Center(
+                                child: Text(
+                                  'Este dia no tuvo bloques registrados.',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                              )
+                            : ListView.builder(
+                                itemCount: record.blocks.length,
+                                itemBuilder: (context, index) {
+                                  final block = record.blocks[index];
+
+                                  return TimeBlock(
+                                    start: block.start,
+                                    end: block.end,
+                                    title: block.title,
+                                    description: block.description,
+                                    type: block.type,
+                                    countsTowardProgress:
+                                        block.countsTowardProgress,
+                                    isDone: block.isDone,
+                                  );
+                                },
+                              ))
+                        : hasScheduledRoutine
+                            ? (previewBlocks.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      'La rutina aplica en esta fecha, pero todavia no tiene bloques.',
+                                      style:
+                                          theme.textTheme.bodyMedium?.copyWith(
+                                        color: Colors.white70,
+                                      ),
+                                    ),
+                                  )
+                                : ListView.builder(
+                                    itemCount: previewBlocks.length,
+                                    itemBuilder: (context, index) {
+                                      final block = previewBlocks[index];
+
+                                      return TimeBlock(
+                                        start: block.start,
+                                        end: block.end,
+                                        title: block.title,
+                                        description: block.description,
+                                        type: block.type,
+                                        countsTowardProgress:
+                                            block.countsTowardProgress,
+                                        isDone: false,
+                                      );
+                                    },
+                                  ))
+                            : Center(
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 24),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.event_busy_outlined,
+                                        size: 52,
+                                        color: theme.colorScheme.primary,
+                                      ),
+                                      const SizedBox(height: 14),
+                                      Text(
+                                        'No hay una rutina configurada para esta fecha',
+                                        textAlign: TextAlign.center,
+                                        style:
+                                            theme.textTheme.titleMedium?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Puedes crear o editar una rutina con rango de fechas para planificar este dia.',
+                                        textAlign: TextAlign.center,
+                                        style:
+                                            theme.textTheme.bodyMedium?.copyWith(
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Abre el historial de la rutina activa con una vista de calendario mensual.
+  Future<void> showCalendarHistorySheet() async {
+    if (activeRoutine == null) return;
+
+    final selectedDate = await showModalBottomSheet<DateTime>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      showDragHandle: true,
+      builder: (context) {
+        DateTime visibleMonth = calendarMonthAnchor;
+
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final theme = Theme.of(context);
+            final calendarDays = buildCalendarGridDays(visibleMonth);
+            final formattedMonth =
+                DateKey.formatForDisplay(DateKey.fromDate(visibleMonth));
+            final parts = formattedMonth.split(' ');
+            final monthLabel = '${parts[1]} ${visibleMonth.year}';
+
+            return SafeArea(
+              child: SizedBox(
+                height: MediaQuery.of(context).size.height * 0.82,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Calendario de ${activeRoutine!.name}',
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Toca un dia para ver su registro real, una vista previa futura o el mensaje de que aun no hay rutina para esa fecha.',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.white70,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.06),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  visibleMonth = DateTime(
+                                    visibleMonth.year,
+                                    visibleMonth.month - 1,
+                                  );
+                                });
+                              },
+                              icon: const Icon(Icons.chevron_left_rounded),
+                            ),
+                            Expanded(
+                              child: Text(
+                                monthLabel,
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  visibleMonth = DateTime(
+                                    visibleMonth.year,
+                                    visibleMonth.month + 1,
+                                  );
+                                });
+                              },
+                              icon: const Icon(Icons.chevron_right_rounded),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      GridView.count(
+                        crossAxisCount: 7,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
+                        childAspectRatio: 1.1,
+                        children: const [
+                          'Lun',
+                          'Mar',
+                          'Mie',
+                          'Jue',
+                          'Vie',
+                          'Sab',
+                          'Dom',
+                        ].map((label) {
+                          return Builder(
+                            builder: (context) => buildCalendarWeekdayCell(
+                              context: context,
+                              label: label,
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: GridView.builder(
+                          itemCount: calendarDays.length,
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 7,
+                            mainAxisSpacing: 8,
+                            crossAxisSpacing: 8,
+                            childAspectRatio: 0.95,
+                          ),
+                          itemBuilder: (context, index) {
+                            final day = calendarDays[index];
+
+                            return buildCalendarDayTile(
+                              context: context,
+                              day: day,
+                              visibleMonth: visibleMonth,
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        children: [
+                          buildCalendarLegendItem(
+                            context: context,
+                            marker: const Icon(
+                              Icons.local_fire_department_rounded,
+                              size: 16,
+                              color: Color(0xFFFFA24D),
+                            ),
+                            label: 'Dia con actividad',
+                          ),
+                          buildCalendarLegendItem(
+                            context: context,
+                            marker: Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primary
+                                    .withValues(alpha: 0.7),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            label: 'Dia futuro planificado',
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (selectedDate != null && mounted) {
+      await showCalendarDateDetails(selectedDate);
+    }
   }
 
   /// Abre el selector visual de rutinas.
@@ -831,7 +2594,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                     children: [
                       Expanded(
                         child: Text(
-                          'Seleccionar rutina',
+                          'Rutinas',
                           style: theme.textTheme.titleLarge?.copyWith(
                             fontWeight: FontWeight.w700,
                           ),
@@ -851,7 +2614,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
                   child: Text(
-                    'Elige cual rutina quieres usar hoy.',
+                    'Elige la rutina que quieres ver hoy o editar para mas adelante.',
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: Colors.white70,
                     ),
@@ -860,6 +2623,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                 ...routines.map((routine) {
                   final isSelected = routine.id == activeRoutine?.id;
                   final canDelete = routines.length > 1;
+                  final appliesToday = routine.appliesOn(todayDate);
 
                   return Card(
                     margin: const EdgeInsets.only(bottom: 10),
@@ -874,17 +2638,42 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         color: isSelected ? theme.colorScheme.primary : null,
                       ),
                       title: Text(routine.name),
-                      subtitle: Text('${routine.blocks.length} bloques'),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('${routine.blocks.length} bloques'),
+                          const SizedBox(height: 4),
+                          Text(
+                            routine.schedule.displayLabel,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: Colors.white70,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            appliesToday
+                                ? 'Sugerida hoy'
+                                : 'Fuera del rango sugerido',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: appliesToday
+                                  ? const Color(0xFF41C47B)
+                                  : Colors.white54,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(
-                            tooltip: 'Renombrar rutina',
+                            tooltip: 'Editar nombre y vigencia',
                             onPressed: () async {
                               Navigator.of(context).pop();
-                              await renameRoutine(routine);
+                              await editRoutine(routine);
                             },
-                            icon: const Icon(Icons.edit_outlined),
+                            icon: const Icon(Icons.edit_note_rounded),
                           ),
                           IconButton(
                             tooltip: canDelete
@@ -924,9 +2713,6 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// Calcula el progreso total de la rutina activa.
   ///
   /// Regla: solo cuentan los bloques marcados como relevantes para progreso.
-  ///
-  /// Caso borde: si la rutina no tiene bloques elegibles, devolvemos 0 para
-  /// evitar divisiones por cero y para expresar que aun no hay progreso medible.
   double get progress {
     final progressBlocks =
         visibleBlocks.where((block) => block.countsTowardProgress).toList();
@@ -989,12 +2775,27 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final nonProgressBlocksCount =
         blocks.where((block) => !block.countsTowardProgress).length;
     final insights = activeRoutineInsights;
+    final isScheduledToday = isActiveRoutineScheduledToday;
+    final emptyStateDescription = isScheduledToday
+        ? 'La rutina ya quedo creada. Ahora puedes agregar tu primer bloque.'
+        : 'Esta rutina esta fuera de su rango sugerido para hoy, pero puedes usarla o editarla igualmente.';
+    final progressDescription = progressBlocks.isEmpty
+        ? 'Aun no hay bloques que cuenten para el progreso.'
+        : '$completed de ${progressBlocks.length} bloques cuentan para progreso.';
 
     return Scaffold(
       appBar: AppBar(
         title: Text('Hoy \u00B7 ${activeRoutine!.name}'),
         centerTitle: true,
         actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: IconButton(
+              tooltip: 'Historial',
+              onPressed: showCalendarHistorySheet,
+              icon: const Icon(Icons.history_rounded),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 4),
             child: IconButton(
@@ -1039,16 +2840,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Progreso del d\u00EDa',
+                    'Progreso del dia',
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    progressBlocks.isEmpty
-                        ? 'A\u00FAn no hay bloques que cuenten para el progreso'
-                        : '$completed de ${progressBlocks.length} bloques que cuentan para progreso',
+                    progressDescription,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: Colors.white70,
                     ),
@@ -1066,12 +2865,29 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         avatar: const Icon(Icons.view_list_rounded, size: 18),
                         label: Text('${blocks.length} bloques'),
                       ),
+                      Chip(
+                        avatar: const Icon(Icons.date_range_rounded, size: 18),
+                        label: Text(activeRoutine!.schedule.shortLabel),
+                      ),
+                      if (!isScheduledToday)
+                        Chip(
+                          avatar:
+                              const Icon(Icons.watch_later_outlined, size: 18),
+                          label: const Text('Fuera del rango sugerido'),
+                        ),
                       if (nonProgressBlocksCount > 0)
                         Chip(
                           avatar: const Icon(Icons.visibility_outlined, size: 18),
                           label: Text('$nonProgressBlocksCount informativos'),
                         ),
                     ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    activeRoutine!.schedule.displayLabel,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.white70,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   TweenAnimationBuilder<double>(
@@ -1150,7 +2966,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'La rutina ya quedo creada. Ahora puedes agregar tu primer bloque.',
+                            emptyStateDescription,
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodyMedium?.copyWith(
                               color: Colors.white70,

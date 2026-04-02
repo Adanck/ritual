@@ -6,6 +6,7 @@ import 'package:ritual/data/models/block_type.dart';
 import 'package:ritual/data/models/daily_record.dart';
 import 'package:ritual/data/models/day_block.dart';
 import 'package:ritual/data/models/routine.dart';
+import 'package:ritual/data/models/routine_schedule.dart';
 import 'package:ritual/data/services/storage_service.dart';
 
 void main() {
@@ -28,6 +29,10 @@ void main() {
         id: 'normal',
         name: 'Normal',
         isActive: true,
+        schedule: RoutineSchedule.customRange(
+          startDateKey: '2026-04-01',
+          endDateKey: '2026-04-30',
+        ),
         blocks: [
           DayBlock(
             start: '07:00',
@@ -49,6 +54,9 @@ void main() {
     expect(loadedRoutines.first.id, 'normal');
     expect(loadedRoutines.first.name, 'Normal');
     expect(loadedRoutines.first.isActive, isTrue);
+    expect(loadedRoutines.first.schedule.type, RoutineScheduleType.customRange);
+    expect(loadedRoutines.first.schedule.startDateKey, '2026-04-01');
+    expect(loadedRoutines.first.schedule.endDateKey, '2026-04-30');
     expect(loadedRoutines.first.blocks, hasLength(1));
     expect(loadedRoutines.first.blocks.first.title, 'Ingles');
     expect(loadedRoutines.first.blocks.first.description, 'Practica diaria');

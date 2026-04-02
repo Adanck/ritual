@@ -218,3 +218,54 @@ Si quieres abrir otro hilo en otra PC, puedes pegar algo como esto:
 - El proyecto sigue en una fase donde la velocidad de iteracion importa mucho, pero ya empieza a valer la pena cuidar mejor la arquitectura.
 - Cuando se implemente notificaciones, la intencion es que cada bloque tenga una propiedad explicita tipo `receivesPushNotification` o similar, comparable a `countsTowardProgress`.
 - Este archivo esta pensado para ser editado manualmente y tambien para que Codex lo actualice en futuras sesiones.
+
+## 12. Ultimos cambios importantes
+
+### Historial y estadisticas
+
+La app ya no depende solo de la plantilla de la rutina para representar el dia actual.
+Ahora existe una separacion clara entre:
+
+- la rutina como plantilla editable
+- el registro diario como lo que realmente ocurrio en una fecha concreta
+
+Esto permitio implementar:
+
+- reset diario automatico
+- historial por fecha
+- rachas
+- estadisticas basicas
+
+### Navegacion de dias anteriores
+
+Desde la pantalla principal ya existe una entrada al historial de la rutina activa.
+El usuario puede:
+
+- abrir dias anteriores
+- ver el estado de cumplimiento de cada dia
+- entrar al detalle de un dia pasado
+- revisar que bloques tuvo ese dia y cuales se completaron
+
+### Vigencia de rutinas
+
+Las rutinas ahora tienen una configuracion explicita de vigencia.
+Por el momento soportan:
+
+- siempre
+- semana actual
+- mes actual
+- rango personalizado
+
+Decision de producto:
+
+- una rutina puede seguir editandose aunque no este vigente hoy
+- solo las rutinas vigentes generan progreso y checks del dia
+- si la rutina no esta vigente hoy, la pantalla muestra la plantilla y no crea progreso diario nuevo por accidente
+
+### Siguiente conversacion recomendada
+
+Si otro hilo retoma el proyecto despues de este punto, el siguiente paso natural puede ser uno de estos:
+
+1. avisos cuando una rutina esta por vencer o empezar
+2. seleccion automatica de la rutina que aplica hoy cuando existan varias vigentes
+3. notificaciones push por bloque usando una propiedad tipo `receivesPushNotification`

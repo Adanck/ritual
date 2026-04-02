@@ -4,6 +4,7 @@ import '../models/block_type.dart';
 import '../models/daily_record.dart';
 import '../models/day_block.dart';
 import '../models/routine.dart';
+import '../models/routine_schedule.dart';
 
 /// Encapsula la persistencia local del MVP usando Hive.
 class StorageService {
@@ -20,6 +21,11 @@ class StorageService {
         'id': routine.id,
         'name': routine.name,
         'isActive': routine.isActive,
+        'schedule': {
+          'type': routine.schedule.type.name,
+          'startDateKey': routine.schedule.startDateKey,
+          'endDateKey': routine.schedule.endDateKey,
+        },
         'blocks': routine.blocks.map((block) {
           return {
             'id': block.id,
@@ -46,10 +52,22 @@ class StorageService {
     if (data == null) return [];
 
     return (data as List).map((item) {
+      final scheduleData = item['schedule'];
+
       return Routine(
         id: item['id'],
         name: item['name'],
         isActive: item['isActive'],
+        schedule: scheduleData is Map
+            ? RoutineSchedule(
+                type: RoutineScheduleType.values.firstWhere(
+                  (type) => type.name == scheduleData['type'],
+                  orElse: () => RoutineScheduleType.always,
+                ),
+                startDateKey: scheduleData['startDateKey'],
+                endDateKey: scheduleData['endDateKey'],
+              )
+            : const RoutineSchedule.always(),
         blocks: (item['blocks'] as List).map((block) {
           return DayBlock(
             id: block['id'],
