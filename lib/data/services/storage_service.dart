@@ -37,6 +37,7 @@ class StorageService {
             'description': block.description,
             'type': block.type.name,
             'countsTowardProgress': block.countsTowardProgress,
+            'receivesPushNotification': block.receivesPushNotification,
             'isDone': block.isDone,
           };
         }).toList(),
@@ -81,6 +82,8 @@ class StorageService {
               (type) => type.name == block['type'],
             ),
             countsTowardProgress: block['countsTowardProgress'] ?? true,
+            receivesPushNotification:
+                block['receivesPushNotification'] ?? false,
             isDone: block['isDone'],
           );
         }).toList(),
@@ -106,6 +109,7 @@ class StorageService {
             'description': block.description,
             'type': block.type.name,
             'countsTowardProgress': block.countsTowardProgress,
+            'receivesPushNotification': block.receivesPushNotification,
             'isDone': block.isDone,
           };
         }).toList(),
@@ -138,6 +142,8 @@ class StorageService {
               (type) => type.name == block['type'],
             ),
             countsTowardProgress: block['countsTowardProgress'] ?? true,
+            receivesPushNotification:
+                block['receivesPushNotification'] ?? false,
             isDone: block['isDone'],
           );
         }).toList(),
@@ -160,6 +166,7 @@ class StorageService {
           'description': entry.block.description,
           'type': entry.block.type.name,
           'countsTowardProgress': entry.block.countsTowardProgress,
+          'receivesPushNotification': entry.block.receivesPushNotification,
           'isDone': entry.block.isDone,
         },
       };
@@ -190,6 +197,8 @@ class StorageService {
             (type) => type.name == block['type'],
           ),
           countsTowardProgress: block['countsTowardProgress'] ?? false,
+          receivesPushNotification:
+              block['receivesPushNotification'] ?? false,
           isDone: block['isDone'],
         ),
       );

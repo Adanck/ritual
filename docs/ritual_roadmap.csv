@@ -28,7 +28,7 @@ RIT-023,Fase 5 - Historial,"Mostrar si el dia fue completado o no",Hecho,Feature
 RIT-024,Fase 5 - Historial,"Implementar streaks",Hecho,Feature,Alta,"feat: add streak tracking","Contar dias consecutivos cumplidos."
 RIT-025,Fase 5 - Historial,"Mostrar estadisticas basicas",Hecho,Feature,Media,"feat: add routine statistics","Ya muestra racha, dias activos, cumplimiento y bloques completados."
 RIT-026,Fase 5 - Historial,"Preparar base para gamificacion",Pendiente,Refactor,Media,"refactor: prepare gamification model","Definir puntos, logros o sistema futuro."
-RIT-026A,Fase 5 - Historial,"Configurar por bloque si recibe notificacion push",Pendiente,Feature,Media,"feat: support block-level push notification preference","Seguir la misma idea de countsTowardProgress pero para recordatorios push."
+RIT-026A,Fase 5 - Historial,"Configurar por bloque si recibe notificacion push",Hecho,Feature,Media,"feat: support block-level push notification preference","Ya existe la propiedad por bloque, persistencia y UI base para usarla mas adelante con notificaciones reales."
 RIT-027,Fase 6 - Producto completo,"Agregar pantalla de ajustes",Pendiente,Feature,Media,"feat: add settings page","Tema, preferencias y comportamiento diario."
 RIT-028,Fase 6 - Producto completo,"Exportar datos a Excel",Pendiente,Feature,Media,"feat: export routines to excel","Conecta con el flujo original del producto."
 RIT-029,Fase 6 - Producto completo,"Importar datos desde Excel",Pendiente,Feature,Media,"feat: import routines from excel","Ideal para migrar usuarios del sistema actual."

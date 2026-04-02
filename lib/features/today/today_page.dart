@@ -25,6 +25,24 @@ class _RoutineFormResult {
   });
 }
 
+/// Representa un aviso contextual sobre la vigencia de las rutinas.
+///
+/// Lo usamos para traducir reglas de calendario a mensajes concretos dentro
+/// de la pantalla principal sin mezclar la UI con la logica de fechas.
+class _RoutineNotice {
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String description;
+
+  const _RoutineNotice({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.description,
+  });
+}
+
 /// Opciones disponibles cuando el usuario cambia de rutina a mitad del dia.
 ///
 /// Las tres estrategias existen porque cada una responde a una intencion
@@ -83,6 +101,10 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     DropdownMenuItem(
       value: BlockType.reminder,
       child: Text('Recordatorio'),
+    ),
+    DropdownMenuItem(
+      value: BlockType.event,
+      child: Text('Evento puntual'),
     ),
   ];
 
@@ -202,8 +224,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         );
   }
 
-  bool isReminderBlock(DayBlock block) {
-    return block.type == BlockType.reminder;
+  bool isDatedBlock(DayBlock block) {
+    return getDatedBlockEntryById(block.id) != null;
   }
 
   String buildBlockSignature(DayBlock block) {
@@ -335,7 +357,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
             continue;
           }
 
-          mergedBlocks.add(cloneBlockForDailyRecord(templateBlock));
+          mergedBlocks.add(
+            cloneBlockForDailyRecord(templateBlock, isDone: false),
+          );
         }
 
         return sortBlocksChronologically(mergedBlocks);
@@ -353,7 +377,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
             continue;
           }
 
-          rebuiltBlocks.add(cloneBlockForDailyRecord(templateBlock));
+          rebuiltBlocks.add(
+            cloneBlockForDailyRecord(templateBlock, isDone: false),
+          );
         }
 
         return sortBlocksChronologically(rebuiltBlocks);
@@ -361,7 +387,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         // Regla: un reinicio total ignora el progreso previo y crea un nuevo
         // dia desde la plantilla de la rutina seleccionada.
         return sortBlocksChronologically(
-          nextRoutineBlocks.map(cloneBlockForDailyRecord).toList(),
+          nextRoutineBlocks
+              .map((block) => cloneBlockForDailyRecord(block, isDone: false))
+              .toList(),
         );
     }
   }
@@ -476,7 +504,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
   /// Crea una copia del bloque de plantilla para usarlo dentro del historial.
   DayBlock cloneBlockForDailyRecord(DayBlock block, {bool? isDone}) {
-    return block.copyWith(isDone: isDone ?? false);
+    return block.copyWith(isDone: isDone ?? block.isDone);
   }
 
   /// Sincroniza los bloques del registro diario con la plantilla actual.
@@ -522,7 +550,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           routineId: activeRoutine!.id,
           routineName: activeRoutine!.name,
           blocks: activeRoutine!.blocks
-              .map((block) => cloneBlockForDailyRecord(block))
+              .map((block) => cloneBlockForDailyRecord(block, isDone: false))
               .toList(),
         ),
       ];
@@ -591,7 +619,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     final block = visibleBlocks[index];
 
-    if (isReminderBlock(block)) {
+    if (isDatedBlock(block)) {
       final reminderEntry = getDatedBlockEntryById(block.id);
       if (reminderEntry == null) return;
 
@@ -1418,6 +1446,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final selectedTime = await showTimePicker(
       context: context,
       initialTime: initialTime,
+      initialEntryMode: TimePickerEntryMode.input,
       builder: (context, child) {
         final theme = Theme.of(context);
 
@@ -1444,6 +1473,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     DayBlock? existingBlock,
     BlockType initialType = BlockType.habit,
     bool initialCountsTowardProgress = true,
+    bool initialReceivesPushNotification = false,
   }) async {
     final formKey = GlobalKey<FormState>();
     var selectedType = existingBlock?.type ?? initialType;
@@ -1453,6 +1483,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     var description = existingBlock?.description ?? '';
     var countsTowardProgress =
         existingBlock?.countsTowardProgress ?? initialCountsTowardProgress;
+    var receivesPushNotification = existingBlock?.receivesPushNotification ??
+        initialReceivesPushNotification;
 
     return showDialog<DayBlock>(
       context: context,
@@ -1611,6 +1643,20 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           });
                         },
                       ),
+                      const SizedBox(height: 8),
+                      SwitchListTile.adaptive(
+                        value: receivesPushNotification,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Recibir recordatorio push'),
+                        subtitle: const Text(
+                          'Por ahora solo guarda la preferencia. Las notificaciones reales se conectaran en una etapa posterior.',
+                        ),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            receivesPushNotification = value;
+                          });
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -1649,6 +1695,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           description: description.trim(),
                           type: selectedType,
                           countsTowardProgress: countsTowardProgress,
+                          receivesPushNotification: receivesPushNotification,
                           isDone: existingBlock?.isDone ?? false,
                         ),
                       );
@@ -1733,11 +1780,15 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     await saveRoutinesAndRefresh();
   }
 
-  /// Crea un bloque puntual para una fecha especifica sin modificar la rutina.
-  Future<void> createDatedReminderForDate(DateTime date) async {
+  /// Crea un bloque puntual asociado a una fecha concreta.
+  ///
+  /// A diferencia de los bloques de rutina, este bloque pertenece solo a esa
+  /// fecha y sirve para reuniones, citas, recordatorios o eventos aislados.
+  Future<void> createDatedBlockForDate(DateTime date) async {
     final createdBlock = await showBlockForm(
-      initialType: BlockType.reminder,
+      initialType: BlockType.event,
       initialCountsTowardProgress: false,
+      initialReceivesPushNotification: true,
     );
 
     if (createdBlock == null) return;
@@ -1751,10 +1802,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (!shouldSave) return;
 
     final normalizedDateKey = DateKey.fromDate(date);
-    final reminderBlock = createdBlock.copyWith(
-      id: 'reminder-${createdBlock.id}',
-      type: BlockType.reminder,
-      countsTowardProgress: createdBlock.countsTowardProgress,
+    final datedBlock = createdBlock.copyWith(
+      id: 'dated-${createdBlock.id}',
       isDone: false,
     );
 
@@ -1762,7 +1811,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       ...getDatedBlocksForDate(normalizedDateKey),
       DatedBlockEntry(
         dateKey: normalizedDateKey,
-        block: reminderBlock,
+        block: datedBlock,
       ),
     ];
     final sortedEntries = sortBlocksChronologically(
@@ -1790,7 +1839,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     final block = visibleBlocks[index];
 
-    if (isReminderBlock(block)) {
+    if (isDatedBlock(block)) {
       final reminderEntry = getDatedBlockEntryById(block.id);
       if (reminderEntry == null) return;
 
@@ -1814,7 +1863,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       final reminderDateKey = reminderEntry.dateKey;
       final updatedEntries = getDatedBlocksForDate(reminderDateKey)
           .map((entry) => entry.block.id == block.id
-              ? updatedBlock.copyWith(type: BlockType.reminder)
+              ? updatedBlock
               : entry.block)
           .toList();
       final sortedBlocks = sortBlocksChronologically(updatedEntries);
@@ -1908,7 +1957,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (activeRoutine == null) return;
     final block = visibleBlocks[index];
 
-    if (isReminderBlock(block)) {
+    if (isDatedBlock(block)) {
       final reminderEntry = getDatedBlockEntryById(block.id);
       if (reminderEntry == null) return;
 
@@ -2119,6 +2168,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                 description: block.description,
                                 type: block.type,
                                 countsTowardProgress: block.countsTowardProgress,
+                                receivesPushNotification:
+                                    block.receivesPushNotification,
                                 isDone: block.isDone,
                               );
                             },
@@ -2459,7 +2510,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         activeRoutine!.appliesOn(date) || datedBlocksForDate.isNotEmpty;
     final isFuture = isFutureCalendarDay(date);
     final previewBlocks = activeRoutine!.blocks
-        .map((block) => cloneBlockForDailyRecord(block))
+        .map((block) => cloneBlockForDailyRecord(block, isDone: false))
         .toList();
     final previewAndReminderBlocks = sortBlocksChronologically([
       ...previewBlocks,
@@ -2591,14 +2642,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                       child: FilledButton.tonalIcon(
                         onPressed: () async {
                           Navigator.of(context).pop();
-                          await createDatedReminderForDate(date);
+                          await createDatedBlockForDate(date);
                           if (!mounted) return;
                           await showCalendarDateDetails(date);
                         },
-                        icon: const Icon(Icons.add_alert_rounded),
+                        icon: const Icon(Icons.event_available_rounded),
                         label: Text(
                           isFuture
-                              ? 'Agregar recordatorio para esta fecha'
+                              ? 'Agregar bloque puntual para esta fecha'
                               : 'Agregar bloque puntual para hoy',
                         ),
                       ),
@@ -2629,6 +2680,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                     type: block.type,
                                     countsTowardProgress:
                                         block.countsTowardProgress,
+                                    receivesPushNotification:
+                                        block.receivesPushNotification,
                                     isDone: block.isDone,
                                   );
                                 },
@@ -2657,6 +2710,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                         type: block.type,
                                         countsTowardProgress:
                                             block.countsTowardProgress,
+                                        receivesPushNotification:
+                                            block.receivesPushNotification,
                                         isDone: false,
                                       );
                                     },
@@ -2940,7 +2995,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                 ...routines.map((routine) {
                   final isSelected = routine.id == activeRoutine?.id;
                   final canDelete = routines.length > 1;
-                  final appliesToday = routine.appliesOn(todayDate);
+                  final scheduleStatus = buildRoutineScheduleStatus(routine);
 
                   return Card(
                     margin: const EdgeInsets.only(bottom: 10),
@@ -2969,13 +3024,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            appliesToday
-                                ? 'Sugerida hoy'
-                                : 'Fuera del rango sugerido',
+                            scheduleStatus.label,
                             style: theme.textTheme.bodySmall?.copyWith(
-                              color: appliesToday
-                                  ? const Color(0xFF41C47B)
-                                  : Colors.white54,
+                              color: scheduleStatus.color,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -3076,6 +3127,196 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 
+  /// Resume la vigencia de una rutina para listas compactas.
+  ///
+  /// Regla: mostramos un solo mensaje accionable para que el usuario entienda
+  /// rapido si la rutina aplica hoy, si empieza pronto o si ya vencio.
+  ({String label, Color color}) buildRoutineScheduleStatus(Routine routine) {
+    final daysUntilStart = routine.schedule.daysUntilStart(todayDate);
+    final daysUntilEnd = routine.schedule.daysUntilEnd(todayDate);
+
+    if (routine.appliesOn(todayDate)) {
+      if (daysUntilEnd == 0) {
+        return (
+          label: 'Termina hoy',
+          color: const Color(0xFFFFA24D),
+        );
+      }
+
+      if (daysUntilEnd != null && daysUntilEnd <= 2) {
+        return (
+          label: 'Termina en $daysUntilEnd d\u00EDas',
+          color: const Color(0xFFFFA24D),
+        );
+      }
+
+      return (
+        label: 'Sugerida hoy',
+        color: const Color(0xFF41C47B),
+      );
+    }
+
+    if (daysUntilStart == 0) {
+      return (
+        label: 'Empieza hoy',
+        color: const Color(0xFF4DA3FF),
+      );
+    }
+
+    if (daysUntilStart == 1) {
+      return (
+        label: 'Empieza ma\u00F1ana',
+        color: const Color(0xFF4DA3FF),
+      );
+    }
+
+    if (daysUntilStart != null && daysUntilStart <= 7) {
+      return (
+        label: 'Empieza en $daysUntilStart d\u00EDas',
+        color: const Color(0xFF4DA3FF),
+      );
+    }
+
+    if (routine.schedule.hasEndedBy(todayDate)) {
+      return (
+        label: 'Rango ya vencido',
+        color: Colors.white54,
+      );
+    }
+
+    return (
+      label: 'Fuera del rango sugerido',
+      color: Colors.white54,
+    );
+  }
+
+  /// Construye los avisos principales de vigencia que deben verse hoy.
+  List<_RoutineNotice> get activeRoutineNotices {
+    if (activeRoutine == null) return const [];
+
+    final notices = <_RoutineNotice>[];
+    final activeSchedule = activeRoutine!.schedule;
+    final activeDaysUntilEnd = activeSchedule.daysUntilEnd(todayDate);
+
+    if (!activeRoutine!.appliesOn(todayDate)) {
+      notices.add(
+        const _RoutineNotice(
+          icon: Icons.schedule_send_outlined,
+          color: Color(0xFF4DA3FF),
+          title: 'Rutina fuera de rango sugerido',
+          description:
+              'Puedes seguir usandola o editarla, pero hoy no es la rutina sugerida por su vigencia.',
+        ),
+      );
+    } else if (activeDaysUntilEnd == 0) {
+      notices.add(
+        const _RoutineNotice(
+          icon: Icons.event_busy_outlined,
+          color: Color(0xFFFFA24D),
+          title: 'Esta rutina termina hoy',
+          description:
+              'Si quieres continuar con ella despues, conviene extender su rango o preparar una nueva rutina.',
+        ),
+      );
+    } else if (activeDaysUntilEnd != null && activeDaysUntilEnd <= 2) {
+      notices.add(
+        _RoutineNotice(
+          icon: Icons.hourglass_bottom_rounded,
+          color: const Color(0xFFFFA24D),
+          title: 'Esta rutina esta por terminar',
+          description:
+              'Su vigencia termina en $activeDaysUntilEnd d\u00EDas. Puedes dejarla as\u00ED o preparar la siguiente.',
+        ),
+      );
+    }
+
+    final upcomingRoutines = routines
+        .where((routine) => routine.id != activeRoutine!.id)
+        .where(
+          (routine) =>
+              (routine.schedule.daysUntilStart(todayDate) ?? 9999) <= 7,
+        )
+        .toList()
+      ..sort(
+        (a, b) => (a.schedule.daysUntilStart(todayDate) ?? 9999)
+            .compareTo(b.schedule.daysUntilStart(todayDate) ?? 9999),
+      );
+
+    if (upcomingRoutines.isNotEmpty) {
+      final nextRoutine = upcomingRoutines.first;
+      final daysUntilStart = nextRoutine.schedule.daysUntilStart(todayDate) ?? 0;
+      final startText = switch (daysUntilStart) {
+        0 => 'hoy',
+        1 => 'ma\u00F1ana',
+        _ => 'en $daysUntilStart d\u00EDas',
+      };
+
+      notices.add(
+        _RoutineNotice(
+          icon: Icons.upcoming_rounded,
+          color: const Color(0xFF4DA3FF),
+          title: 'Hay otra rutina programada',
+          description:
+              '"${nextRoutine.name}" empieza $startText. Puedes revisarla desde el selector cuando quieras.',
+        ),
+      );
+    }
+
+    return notices;
+  }
+
+  Widget buildRoutineNoticeCard({
+    required BuildContext context,
+    required _RoutineNotice notice,
+  }) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: notice.color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: notice.color.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: notice.color.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(notice.icon, color: notice.color, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  notice.title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  notice.description,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: Colors.white70,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (activeRoutine == null) {
@@ -3091,8 +3332,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final completed = progressBlocks.where((block) => block.isDone).length;
     final nonProgressBlocksCount =
         blocks.where((block) => !block.countsTowardProgress).length;
+    final pushEnabledBlocksCount =
+        blocks.where((block) => block.receivesPushNotification).length;
     final insights = activeRoutineInsights;
     final isScheduledToday = isActiveRoutineScheduledToday;
+    final routineNotices = activeRoutineNotices;
     final emptyStateDescription = isScheduledToday
         ? 'La rutina ya quedo creada. Ahora puedes agregar tu primer bloque.'
         : 'Esta rutina esta fuera de su rango sugerido para hoy, pero puedes usarla o editarla igualmente.';
@@ -3197,6 +3441,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           avatar: const Icon(Icons.visibility_outlined, size: 18),
                           label: Text('$nonProgressBlocksCount informativos'),
                         ),
+                      if (pushEnabledBlocksCount > 0)
+                        Chip(
+                          avatar: const Icon(
+                            Icons.notifications_active_outlined,
+                            size: 18,
+                          ),
+                          label: Text('$pushEnabledBlocksCount con push'),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -3206,6 +3458,18 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                       color: Colors.white70,
                     ),
                   ),
+                  if (routineNotices.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    ...routineNotices.map(
+                      (notice) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: buildRoutineNoticeCard(
+                          context: context,
+                          notice: notice,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   TweenAnimationBuilder<double>(
                     tween: Tween<double>(begin: 0, end: progress),
@@ -3401,6 +3665,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           description: block.description,
                           type: block.type,
                           countsTowardProgress: block.countsTowardProgress,
+                          receivesPushNotification:
+                              block.receivesPushNotification,
                           isDone: block.isDone,
                           onTap: () => toggleBlock(index),
                           secondaryAction: ReorderableDelayedDragStartListener(

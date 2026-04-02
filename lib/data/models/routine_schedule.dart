@@ -135,6 +135,57 @@ class RoutineSchedule {
     }
   }
 
+  /// Indica si la rutina ya empezo para la fecha consultada.
+  ///
+  /// Regla: las rutinas `always` siempre se consideran iniciadas. Caso borde:
+  /// si falta fecha inicial en un rango que la necesita, devolvemos `false`.
+  bool hasStartedBy(DateTime date) {
+    if (type == RoutineScheduleType.always) return true;
+    if (startDateKey == null) return false;
+
+    final normalizedDate = _normalize(date);
+    final start = DateKey.toDate(startDateKey!);
+    return !normalizedDate.isBefore(start);
+  }
+
+  /// Indica si la vigencia ya termino para la fecha consultada.
+  ///
+  /// Caso borde: una rutina sin fecha final nunca se considera vencida.
+  bool hasEndedBy(DateTime date) {
+    if (endDateKey == null) return false;
+
+    final normalizedDate = _normalize(date);
+    final end = DateKey.toDate(endDateKey!);
+    return normalizedDate.isAfter(end);
+  }
+
+  /// Devuelve cuántos dias faltan para que empiece la rutina.
+  ///
+  /// Regla: si la rutina ya comenzo o no tiene inicio explicito, devolvemos
+  /// `null` porque no hay un arranque futuro relevante que avisar.
+  int? daysUntilStart(DateTime fromDate) {
+    if (type == RoutineScheduleType.always || startDateKey == null) return null;
+
+    final normalizedFromDate = _normalize(fromDate);
+    final start = DateKey.toDate(startDateKey!);
+    if (!normalizedFromDate.isBefore(start)) return null;
+
+    return start.difference(normalizedFromDate).inDays;
+  }
+
+  /// Devuelve cuántos dias faltan para que termine la rutina.
+  ///
+  /// Regla: si ya vencio o no existe fin configurado, devolvemos `null`.
+  int? daysUntilEnd(DateTime fromDate) {
+    if (endDateKey == null) return null;
+
+    final normalizedFromDate = _normalize(fromDate);
+    final end = DateKey.toDate(endDateKey!);
+    if (normalizedFromDate.isAfter(end)) return null;
+
+    return end.difference(normalizedFromDate).inDays;
+  }
+
   static DateTime _normalize(DateTime date) {
     return DateTime(date.year, date.month, date.day);
   }

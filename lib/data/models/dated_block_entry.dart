@@ -4,7 +4,7 @@ import 'day_block.dart';
 ///
 /// A diferencia de una rutina, este bloque no se replica automaticamente a
 /// otros dias. Sirve para recordatorios o eventos excepcionales como una
-/// reunion el viernes o una llamada puntual.
+/// reunion el viernes, una cita o una llamada puntual.
 class DatedBlockEntry {
   final String dateKey;
   final DayBlock block;

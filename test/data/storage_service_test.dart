@@ -42,6 +42,7 @@ void main() {
             description: 'Practica diaria',
             type: BlockType.habit,
             countsTowardProgress: false,
+            receivesPushNotification: true,
             isDone: true,
           ),
         ],
@@ -63,6 +64,10 @@ void main() {
     expect(loadedRoutines.first.blocks.first.description, 'Practica diaria');
     expect(loadedRoutines.first.blocks.first.type, BlockType.habit);
     expect(loadedRoutines.first.blocks.first.countsTowardProgress, isFalse);
+    expect(
+      loadedRoutines.first.blocks.first.receivesPushNotification,
+      isTrue,
+    );
     expect(loadedRoutines.first.blocks.first.isDone, isTrue);
   });
 
@@ -81,6 +86,7 @@ void main() {
             description: 'Practica diaria',
             type: BlockType.habit,
             countsTowardProgress: true,
+            receivesPushNotification: true,
             isDone: true,
           ),
         ],
@@ -97,21 +103,26 @@ void main() {
     expect(loadedDailyRecords.first.blocks, hasLength(1));
     expect(loadedDailyRecords.first.blocks.first.id, 'block-1');
     expect(loadedDailyRecords.first.blocks.first.title, 'Ingles');
+    expect(
+      loadedDailyRecords.first.blocks.first.receivesPushNotification,
+      isTrue,
+    );
     expect(loadedDailyRecords.first.blocks.first.isDone, isTrue);
   });
 
-  test('saveDatedBlocks and loadDatedBlocks preserve reminders by date', () async {
+  test('saveDatedBlocks and loadDatedBlocks preserve dated events by date', () async {
     final datedBlocks = [
       DatedBlockEntry(
         dateKey: '2026-04-10',
         block: DayBlock(
-          id: 'reminder-1',
+          id: 'dated-1',
           start: '16:00',
           end: '16:30',
           title: 'Reunion',
           description: 'Llamada puntual del viernes',
-          type: BlockType.reminder,
+          type: BlockType.event,
           countsTowardProgress: false,
+          receivesPushNotification: true,
         ),
       ),
     ];
@@ -121,8 +132,9 @@ void main() {
 
     expect(loadedDatedBlocks, hasLength(1));
     expect(loadedDatedBlocks.first.dateKey, '2026-04-10');
-    expect(loadedDatedBlocks.first.block.id, 'reminder-1');
-    expect(loadedDatedBlocks.first.block.type, BlockType.reminder);
+    expect(loadedDatedBlocks.first.block.id, 'dated-1');
+    expect(loadedDatedBlocks.first.block.type, BlockType.event);
     expect(loadedDatedBlocks.first.block.countsTowardProgress, isFalse);
+    expect(loadedDatedBlocks.first.block.receivesPushNotification, isTrue);
   });
 }

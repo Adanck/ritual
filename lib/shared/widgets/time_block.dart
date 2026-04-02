@@ -9,6 +9,7 @@ class TimeBlock extends StatelessWidget {
   final String description;
   final BlockType type;
   final bool countsTowardProgress;
+  final bool receivesPushNotification;
   final bool isDone;
   final VoidCallback? onTap;
   final Widget? secondaryAction;
@@ -21,6 +22,7 @@ class TimeBlock extends StatelessWidget {
     required this.description,
     required this.type,
     required this.countsTowardProgress,
+    required this.receivesPushNotification,
     required this.isDone,
     this.onTap,
     this.secondaryAction,
@@ -35,6 +37,7 @@ class TimeBlock extends StatelessWidget {
       BlockType.commitment => const Color(0xFF4DA3FF),
       BlockType.visual => const Color(0xFFB0BAC5),
       BlockType.reminder => const Color(0xFFFFA24D),
+      BlockType.event => const Color(0xFFFF7A6B),
     };
 
     return Card(
@@ -66,12 +69,23 @@ class TimeBlock extends StatelessWidget {
                 BlockType.commitment => 'Compromiso',
                 BlockType.visual => 'Visual',
                 BlockType.reminder => 'Recordatorio',
+                BlockType.event => 'Evento puntual',
               },
               style: theme.textTheme.bodySmall?.copyWith(
                 color: color.withValues(alpha: 0.92),
                 fontWeight: FontWeight.w600,
               ),
             ),
+            if (receivesPushNotification) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Con recordatorio push',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: color.withValues(alpha: 0.86),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
             if (!countsTowardProgress) ...[
               const SizedBox(height: 4),
               Text(
@@ -117,6 +131,14 @@ class TimeBlock extends StatelessWidget {
                 color: isDone ? color : Colors.white38,
               ),
             ),
+            if (receivesPushNotification) ...[
+              const SizedBox(width: 10),
+              Icon(
+                Icons.notifications_active_outlined,
+                color: color.withValues(alpha: 0.92),
+                size: 20,
+              ),
+            ],
             if (secondaryAction != null) ...[
               const SizedBox(width: 10),
               secondaryAction!,

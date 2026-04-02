@@ -375,9 +375,12 @@ Ya quedaron implementadas estas capacidades del roadmap:
 - rachas y estadisticas basicas
 - vista de dias anteriores y detalle de un dia historico
 - vigencia de rutinas con modos `siempre`, `semana actual`, `mes actual` y `rango personalizado`
+- avisos de vigencia para rutinas que estan por empezar o terminar
+- preferencia por bloque para recibir notificaciones push
+- bloques puntuales por fecha con soporte para eventos y recordatorios
 
 Siguiente bloque recomendado:
 
-1. avisos de vigencia para rutinas que estan por empezar o terminar
-2. seleccion automatica de la rutina que aplica hoy cuando haya varias vigentes
-3. preferencia por bloque para recibir notificaciones push
+1. seleccion automatica de la rutina que aplica hoy cuando haya varias vigentes
+2. conectar la preferencia de push con notificaciones reales
+3. enriquecer aun mas los eventos puntuales de calendario

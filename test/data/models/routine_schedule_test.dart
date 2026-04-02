@@ -30,4 +30,24 @@ void main() {
     expect(schedule.appliesTo(DateTime(2026, 4, 10)), isTrue);
     expect(schedule.appliesTo(DateTime(2026, 5, 1)), isTrue);
   });
+
+  test('daysUntilStart reports upcoming scheduled routines', () {
+    final schedule = RoutineSchedule.customRange(
+      startDateKey: '2026-04-10',
+      endDateKey: '2026-04-20',
+    );
+
+    expect(schedule.daysUntilStart(DateTime(2026, 4, 7)), 3);
+    expect(schedule.daysUntilStart(DateTime(2026, 4, 10)), isNull);
+  });
+
+  test('daysUntilEnd reports remaining validity days', () {
+    final schedule = RoutineSchedule.customRange(
+      startDateKey: '2026-04-10',
+      endDateKey: '2026-04-20',
+    );
+
+    expect(schedule.daysUntilEnd(DateTime(2026, 4, 18)), 2);
+    expect(schedule.daysUntilEnd(DateTime(2026, 4, 21)), isNull);
+  });
 }

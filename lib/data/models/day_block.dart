@@ -12,6 +12,7 @@ class DayBlock {
   final String description;
   final BlockType type;
   final bool countsTowardProgress;
+  final bool receivesPushNotification;
   bool isDone;
 
   DayBlock({
@@ -22,6 +23,7 @@ class DayBlock {
     this.description = '',
     required this.type,
     this.countsTowardProgress = true,
+    this.receivesPushNotification = false,
     this.isDone = false,
   }) : id = id ?? DateTime.now().microsecondsSinceEpoch.toString();
 
@@ -34,6 +36,7 @@ class DayBlock {
     String? description,
     BlockType? type,
     bool? countsTowardProgress,
+    bool? receivesPushNotification,
     bool? isDone,
   }) {
     return DayBlock(
@@ -44,6 +47,8 @@ class DayBlock {
       description: description ?? this.description,
       type: type ?? this.type,
       countsTowardProgress: countsTowardProgress ?? this.countsTowardProgress,
+      receivesPushNotification:
+          receivesPushNotification ?? this.receivesPushNotification,
       isDone: isDone ?? this.isDone,
     );
   }

@@ -259,8 +259,8 @@ Por el momento soportan:
 Decision de producto:
 
 - una rutina puede seguir editandose aunque no este vigente hoy
-- solo las rutinas vigentes generan progreso y checks del dia
-- si la rutina no esta vigente hoy, la pantalla muestra la plantilla y no crea progreso diario nuevo por accidente
+- la vigencia sirve principalmente como aviso o sugerencia, no como bloqueo duro
+- si la rutina no esta vigente hoy, la pantalla lo comunica, pero el usuario aun puede decidir usarla
 
 ### Siguiente conversacion recomendada
 
@@ -269,3 +269,17 @@ Si otro hilo retoma el proyecto despues de este punto, el siguiente paso natural
 1. avisos cuando una rutina esta por vencer o empezar
 2. seleccion automatica de la rutina que aplica hoy cuando existan varias vigentes
 3. notificaciones push por bloque usando una propiedad tipo `receivesPushNotification`
+
+## 13. Cambios recientes pendientes de validar
+
+En la sesion actual se agrego una base nueva para tres cosas:
+
+- avisos de vigencia de rutina dentro de la pantalla principal
+- propiedad por bloque `receivesPushNotification`
+- soporte mas completo para bloques puntuales por fecha, incluyendo tipo `event`
+
+La intencion de producto en este punto es:
+
+- la vigencia debe avisar, no bloquear
+- cada bloque decide si quiere push o no
+- los eventos puntuales de calendario no deben reescribir la rutina base
