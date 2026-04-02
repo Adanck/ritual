@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:ritual/core/utils/date_key.dart';
 import 'package:ritual/core/utils/day_block_time_validator.dart';
+import 'package:ritual/core/utils/routine_history_insights.dart';
 import 'package:ritual/data/models/block_type.dart';
+import 'package:ritual/data/models/daily_record.dart';
 import 'package:ritual/data/models/day_block.dart';
 import 'package:ritual/data/models/routine.dart';
 import 'package:ritual/data/services/storage_service.dart';
@@ -21,8 +24,9 @@ class TodayPage extends StatefulWidget {
 ///
 /// Aqui vive la logica principal de la pantalla mientras el proyecto sigue con
 /// una arquitectura sencilla basada en `StatefulWidget`.
-class _TodayPageState extends State<TodayPage> {
+class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   List<Routine> routines = [];
+  List<DailyRecord> dailyRecords = [];
   Routine? activeRoutine;
 
   static const List<DropdownMenuItem<BlockType>> _blockTypeOptions = [
@@ -40,10 +44,63 @@ class _TodayPageState extends State<TodayPage> {
     ),
   ];
 
+  String get todayKey => DateKey.fromDate(DateTime.now());
+
+  DailyRecord? get activeDayRecord {
+    if (activeRoutine == null) return null;
+
+    final index = dailyRecords.indexWhere(
+      (record) =>
+          record.dateKey == todayKey && record.routineId == activeRoutine!.id,
+    );
+
+    if (index == -1) return null;
+    return dailyRecords[index];
+  }
+
+  List<DayBlock> get visibleBlocks => activeDayRecord?.blocks ?? const [];
+
+  RoutineHistoryInsights get activeRoutineInsights {
+    if (activeRoutine == null) {
+      return const RoutineHistoryInsights(
+        currentStreak: 0,
+        activeDays: 0,
+        trackedDays: 0,
+        completedDays: 0,
+        completedBlocks: 0,
+        completionRate: 0,
+      );
+    }
+
+    return RoutineHistoryCalculator.calculate(
+      records: dailyRecords,
+      routineId: activeRoutine!.id,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     loadData();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Caso borde: si la app vuelve despues de medianoche, refrescamos el
+      // registro del dia para aplicar el reset diario automatico.
+      ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+      if (mounted) {
+        setState(() {});
+      }
+    }
   }
 
   /// Carga las rutinas guardadas.
@@ -51,9 +108,12 @@ class _TodayPageState extends State<TodayPage> {
   /// Si es la primera ejecucion, crea una rutina inicial para que la app tenga
   /// contenido visible desde el primer arranque.
   Future<void> loadData() async {
-    final saved = await StorageService.loadRoutines();
+    final savedRoutines = await StorageService.loadRoutines();
+    final savedDailyRecords = await StorageService.loadDailyRecords();
 
-    if (saved.isEmpty) {
+    dailyRecords = savedDailyRecords;
+
+    if (savedRoutines.isEmpty) {
       routines = [
         Routine(
           id: '1',
@@ -61,6 +121,7 @@ class _TodayPageState extends State<TodayPage> {
           isActive: true,
           blocks: [
             DayBlock(
+              id: 'block-english',
               start: '07:00',
               end: '07:45',
               title: 'Ingl\u00E9s',
@@ -69,6 +130,7 @@ class _TodayPageState extends State<TodayPage> {
               countsTowardProgress: true,
             ),
             DayBlock(
+              id: 'block-work',
               start: '08:00',
               end: '12:00',
               title: 'Trabajo',
@@ -77,6 +139,7 @@ class _TodayPageState extends State<TodayPage> {
               countsTowardProgress: true,
             ),
             DayBlock(
+              id: 'block-lunch',
               start: '12:00',
               end: '13:00',
               title: 'Almuerzo',
@@ -85,6 +148,7 @@ class _TodayPageState extends State<TodayPage> {
               countsTowardProgress: false,
             ),
             DayBlock(
+              id: 'block-course',
               start: '14:00',
               end: '15:00',
               title: 'Curso',
@@ -99,26 +163,119 @@ class _TodayPageState extends State<TodayPage> {
       activeRoutine = routines.first;
       await StorageService.saveRoutines(routines);
     } else {
-      routines = saved;
+      routines = savedRoutines;
       activeRoutine = routines.cast<Routine?>().firstWhere(
             (routine) => routine?.isActive ?? false,
             orElse: () => routines.isNotEmpty ? routines.first : null,
           );
+
+      // Caso borde: si ninguna rutina venia marcada como activa, promovemos la
+      // primera para mantener una experiencia consistente.
+      if (activeRoutine != null && !activeRoutine!.isActive) {
+        activeRoutine!.isActive = true;
+        await StorageService.saveRoutines(routines);
+      }
     }
+
+    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
 
     if (!mounted) return;
     setState(() {});
   }
 
-  /// Marca o desmarca un bloque de la rutina activa y persiste el cambio.
-  void toggleBlock(int index) {
+  /// Crea una copia del bloque de plantilla para usarlo dentro del historial.
+  DayBlock cloneBlockForDailyRecord(DayBlock block, {bool? isDone}) {
+    return block.copyWith(isDone: isDone ?? false);
+  }
+
+  /// Sincroniza los bloques del registro diario con la plantilla actual.
+  ///
+  /// Regla: preservamos `isDone` por `id` para no perder el progreso del dia
+  /// cuando el usuario reordena o edita la estructura de la rutina.
+  List<DayBlock> syncTodayBlocksWithTemplate({
+    required List<DayBlock> templateBlocks,
+    required List<DayBlock> currentDayBlocks,
+  }) {
+    final completedStateById = {
+      for (final block in currentDayBlocks) block.id: block.isDone,
+    };
+
+    return templateBlocks.map((templateBlock) {
+      return cloneBlockForDailyRecord(
+        templateBlock,
+        isDone: completedStateById[templateBlock.id] ?? false,
+      );
+    }).toList();
+  }
+
+  /// Garantiza que exista un registro para la rutina activa en la fecha actual.
+  ///
+  /// Esta es la base del reset diario automatico: cuando cambia el dia y no
+  /// existe registro para hoy, se crea uno nuevo desde la plantilla con todos
+  /// los checks apagados.
+  Future<void> ensureTodayRecordForActiveRoutine({
+    bool syncWithTemplate = false,
+  }) async {
     if (activeRoutine == null) return;
 
+    final index = dailyRecords.indexWhere(
+      (record) =>
+          record.dateKey == todayKey && record.routineId == activeRoutine!.id,
+    );
+
+    if (index == -1) {
+      dailyRecords = [
+        ...dailyRecords,
+        DailyRecord(
+          dateKey: todayKey,
+          routineId: activeRoutine!.id,
+          routineName: activeRoutine!.name,
+          blocks: activeRoutine!.blocks
+              .map((block) => cloneBlockForDailyRecord(block))
+              .toList(),
+        ),
+      ];
+
+      await StorageService.saveDailyRecords(dailyRecords);
+      return;
+    }
+
+    if (syncWithTemplate) {
+      final record = dailyRecords[index];
+      final previousBlocks = [...record.blocks];
+      record.routineName = activeRoutine!.name;
+      record.blocks
+        ..clear()
+        ..addAll(
+          syncTodayBlocksWithTemplate(
+            templateBlocks: activeRoutine!.blocks,
+            currentDayBlocks: previousBlocks,
+          ),
+        );
+
+      await StorageService.saveDailyRecords(dailyRecords);
+    }
+  }
+
+  /// Persiste cambios sobre la plantilla y sincroniza el dia actual.
+  Future<void> syncActiveRoutineTemplateAndTodayRecord() async {
+    await StorageService.saveRoutines(routines);
+    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  /// Marca o desmarca un bloque del registro diario activo y persiste el cambio.
+  Future<void> toggleBlock(int index) async {
+    final currentRecord = activeDayRecord;
+    if (currentRecord == null) return;
+
     setState(() {
-      activeRoutine!.blocks[index].isDone = !activeRoutine!.blocks[index].isDone;
+      currentRecord.blocks[index].isDone = !currentRecord.blocks[index].isDone;
     });
 
-    StorageService.saveRoutines(routines);
+    await StorageService.saveDailyRecords(dailyRecords);
   }
 
   /// Cambia cual rutina esta activa.
@@ -137,6 +294,10 @@ class _TodayPageState extends State<TodayPage> {
     });
 
     await StorageService.saveRoutines(routines);
+    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+
+    if (!mounted) return;
+    setState(() {});
   }
 
   /// Crea una nueva rutina vacia y la deja como rutina activa.
@@ -197,6 +358,10 @@ class _TodayPageState extends State<TodayPage> {
     });
 
     await StorageService.saveRoutines(routines);
+    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+
+    if (!mounted) return;
+    setState(() {});
   }
 
   /// Permite renombrar una rutina existente sin alterar sus bloques.
@@ -243,9 +408,22 @@ class _TodayPageState extends State<TodayPage> {
 
     setState(() {
       routine.name = normalizedName;
+
+      // Regla: el historial usa el mismo `routineId`, por lo tanto cuando el
+      // nombre cambia lo reflejamos en todos los registros historicos.
+      for (final record in dailyRecords.where(
+        (record) => record.routineId == routine.id,
+      )) {
+        record.routineName = normalizedName;
+      }
     });
 
     await StorageService.saveRoutines(routines);
+    await StorageService.saveDailyRecords(dailyRecords);
+    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+
+    if (!mounted) return;
+    setState(() {});
   }
 
   /// Elimina una rutina existente de forma segura.
@@ -292,6 +470,7 @@ class _TodayPageState extends State<TodayPage> {
 
     setState(() {
       routines.removeWhere((item) => item.id == routine.id);
+      dailyRecords.removeWhere((record) => record.routineId == routine.id);
 
       // Caso borde: si la rutina activa fue eliminada, promovemos la primera
       // disponible como nueva rutina activa.
@@ -306,6 +485,11 @@ class _TodayPageState extends State<TodayPage> {
     });
 
     await StorageService.saveRoutines(routines);
+    await StorageService.saveDailyRecords(dailyRecords);
+    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+
+    if (!mounted) return;
+    setState(() {});
   }
 
   /// Abre el selector nativo de hora y devuelve el valor ya formateado.
@@ -538,6 +722,7 @@ class _TodayPageState extends State<TodayPage> {
 
                     Navigator.of(context).pop(
                       DayBlock(
+                        id: existingBlock?.id,
                         start: start.trim(),
                         end: end.trim(),
                         title: title.trim(),
@@ -569,7 +754,7 @@ class _TodayPageState extends State<TodayPage> {
       activeRoutine!.blocks.add(createdBlock);
     });
 
-    await StorageService.saveRoutines(routines);
+    await syncActiveRoutineTemplateAndTodayRecord();
   }
 
   /// Edita un bloque existente reemplazandolo por una nueva version.
@@ -585,7 +770,7 @@ class _TodayPageState extends State<TodayPage> {
       activeRoutine!.blocks[index] = updatedBlock;
     });
 
-    await StorageService.saveRoutines(routines);
+    await syncActiveRoutineTemplateAndTodayRecord();
   }
 
   /// Elimina un bloque existente de la rutina activa.
@@ -596,7 +781,7 @@ class _TodayPageState extends State<TodayPage> {
       activeRoutine!.blocks.removeAt(index);
     });
 
-    await StorageService.saveRoutines(routines);
+    await syncActiveRoutineTemplateAndTodayRecord();
   }
 
   /// Reordena los bloques de la rutina activa.
@@ -616,7 +801,7 @@ class _TodayPageState extends State<TodayPage> {
       activeRoutine!.blocks.insert(newIndex, movedBlock);
     });
 
-    StorageService.saveRoutines(routines);
+    syncActiveRoutineTemplateAndTodayRecord();
   }
 
   /// Abre el selector visual de rutinas.
@@ -743,10 +928,8 @@ class _TodayPageState extends State<TodayPage> {
   /// Caso borde: si la rutina no tiene bloques elegibles, devolvemos 0 para
   /// evitar divisiones por cero y para expresar que aun no hay progreso medible.
   double get progress {
-    final progressBlocks = activeRoutine?.blocks
-            .where((block) => block.countsTowardProgress)
-            .toList() ??
-        [];
+    final progressBlocks =
+        visibleBlocks.where((block) => block.countsTowardProgress).toList();
     if (progressBlocks.isEmpty) return 0;
 
     final done = progressBlocks.where((block) => block.isDone).length;
@@ -759,6 +942,37 @@ class _TodayPageState extends State<TodayPage> {
     return const Color(0xFF4DA3FF);
   }
 
+  Widget buildInsightChip({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            '$value $label',
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (activeRoutine == null) {
@@ -768,13 +982,13 @@ class _TodayPageState extends State<TodayPage> {
     }
 
     final theme = Theme.of(context);
-    final blocks = activeRoutine!.blocks;
+    final blocks = visibleBlocks;
     final progressBlocks =
         blocks.where((block) => block.countsTowardProgress).toList();
-    final completed =
-        progressBlocks.where((block) => block.isDone).length;
+    final completed = progressBlocks.where((block) => block.isDone).length;
     final nonProgressBlocksCount =
         blocks.where((block) => !block.countsTowardProgress).length;
+    final insights = activeRoutineInsights;
 
     return Scaffold(
       appBar: AppBar(
@@ -876,6 +1090,37 @@ class _TodayPageState extends State<TodayPage> {
                       );
                     },
                   ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.local_fire_department_outlined,
+                        label: 'racha',
+                        value: '${insights.currentStreak}',
+                      ),
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.calendar_today_outlined,
+                        label: 'd\u00EDas activos',
+                        value: '${insights.activeDays}',
+                      ),
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.percent_rounded,
+                        label: 'cumplimiento',
+                        value: '${(insights.completionRate * 100).round()}%',
+                      ),
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.task_alt_outlined,
+                        label: 'bloques',
+                        value: '${insights.completedBlocks}',
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -929,7 +1174,7 @@ class _TodayPageState extends State<TodayPage> {
                     itemBuilder: (context, index) {
                       final block = blocks[index];
                       final blockKey =
-                          '${activeRoutine!.id}-${block.start}-${block.title}-$index';
+                          '${activeRoutine!.id}-${block.id}-${block.title}-$index';
 
                       return Dismissible(
                         key: ValueKey(blockKey),

@@ -120,6 +120,8 @@ Antes solo algunos tipos eran marcables. Se decidio que es mejor permitir comple
 
 En el futuro, si hace falta distinguir entre bloques informativos y bloques medibles, seria mejor introducir una propiedad explicita como `countsTowardProgress` o `isTrackable`.
 
+Tambien se decidio seguir la misma filosofia para notificaciones: cuando llegue esa etapa, cada bloque deberia poder definir explicitamente si quiere recibir recordatorio push, en lugar de inferirlo automaticamente por su tipo.
+
 3. La UX prioriza rapidez para el uso cotidiano.
 
 Por eso:
@@ -154,6 +156,7 @@ Lo mas importante que sigue pendiente, en terminos practicos, es esto:
 - historial por fecha
 - streaks o rachas
 - estadisticas
+- configuracion por bloque para recibir o no notificaciones push
 - gamificacion
 - importacion/exportacion con Excel
 - sincronizacion en la nube
@@ -170,6 +173,7 @@ Si otra persona o un futuro hilo retoma el proyecto, el orden recomendado es:
 4. permitir eliminar rutinas de forma segura
 5. mejorar el modelo de tiempo
 6. empezar historial diario y streaks
+7. agregar propiedad por bloque para definir si recibe notificacion push
 
 ## 8. Estado del roadmap
 
@@ -212,4 +216,5 @@ Si quieres abrir otro hilo en otra PC, puedes pegar algo como esto:
 
 - La app tiene una buena base visual inicial y conviene no desordenarla con demasiadas acciones o iconos.
 - El proyecto sigue en una fase donde la velocidad de iteracion importa mucho, pero ya empieza a valer la pena cuidar mejor la arquitectura.
+- Cuando se implemente notificaciones, la intencion es que cada bloque tenga una propiedad explicita tipo `receivesPushNotification` o similar, comparable a `countsTowardProgress`.
 - Este archivo esta pensado para ser editado manualmente y tambien para que Codex lo actualice en futuras sesiones.

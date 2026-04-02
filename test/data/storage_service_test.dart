@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:ritual/data/models/block_type.dart';
+import 'package:ritual/data/models/daily_record.dart';
 import 'package:ritual/data/models/day_block.dart';
 import 'package:ritual/data/models/routine.dart';
 import 'package:ritual/data/services/storage_service.dart';
@@ -54,5 +55,39 @@ void main() {
     expect(loadedRoutines.first.blocks.first.type, BlockType.habit);
     expect(loadedRoutines.first.blocks.first.countsTowardProgress, isFalse);
     expect(loadedRoutines.first.blocks.first.isDone, isTrue);
+  });
+
+  test('saveDailyRecords and loadDailyRecords preserve daily history', () async {
+    final dailyRecords = [
+      DailyRecord(
+        dateKey: '2026-04-02',
+        routineId: 'normal',
+        routineName: 'Normal',
+        blocks: [
+          DayBlock(
+            id: 'block-1',
+            start: '07:00',
+            end: '07:45',
+            title: 'Ingles',
+            description: 'Practica diaria',
+            type: BlockType.habit,
+            countsTowardProgress: true,
+            isDone: true,
+          ),
+        ],
+      ),
+    ];
+
+    await StorageService.saveDailyRecords(dailyRecords);
+    final loadedDailyRecords = await StorageService.loadDailyRecords();
+
+    expect(loadedDailyRecords, hasLength(1));
+    expect(loadedDailyRecords.first.dateKey, '2026-04-02');
+    expect(loadedDailyRecords.first.routineId, 'normal');
+    expect(loadedDailyRecords.first.routineName, 'Normal');
+    expect(loadedDailyRecords.first.blocks, hasLength(1));
+    expect(loadedDailyRecords.first.blocks.first.id, 'block-1');
+    expect(loadedDailyRecords.first.blocks.first.title, 'Ingles');
+    expect(loadedDailyRecords.first.blocks.first.isDone, isTrue);
   });
 }

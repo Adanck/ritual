@@ -263,6 +263,22 @@ Antes de meter puntos y logros, conviene definir:
 Commit sugerido:
 `refactor: prepare gamification model`
 
+### RIT-026A Configurar notificaciones por bloque
+
+La idea es que cada bloque pueda decidir explicitamente si participa o no en recordatorios push, igual que hoy ya puede decidir si cuenta o no para el progreso.
+
+Objetivo:
+- no inferir notificaciones solo por tipo de bloque
+- permitir bloques informativos sin push
+- permitir bloques importantes con push
+- dejar abierta la puerta a horarios o estrategias de recordatorio futuras
+
+Posible propiedad:
+- `receivesPushNotification`
+
+Commit sugerido:
+`feat: support block-level push notification preference`
+
 ## Fase 6 - Producto completo
 
 ### RIT-027 Pantalla de ajustes
@@ -327,6 +343,7 @@ El siguiente orden es el que recomiendo para no abrir demasiados frentes a la ve
 5. RIT-015 Validar horarios
 6. RIT-020 Agregar estado vacio
 7. RIT-005 Agregar tests basicos
+8. RIT-026A Configurar notificaciones por bloque
 
 ## Convencion sugerida para estados
 
