@@ -66,6 +66,7 @@ class _TodayPageState extends State<TodayPage> {
               title: 'Ingl\u00E9s',
               description: 'Practica diaria para mantener constancia.',
               type: BlockType.habit,
+              countsTowardProgress: true,
             ),
             DayBlock(
               start: '08:00',
@@ -73,6 +74,7 @@ class _TodayPageState extends State<TodayPage> {
               title: 'Trabajo',
               description: 'Bloque principal de trabajo profundo.',
               type: BlockType.commitment,
+              countsTowardProgress: true,
             ),
             DayBlock(
               start: '12:00',
@@ -80,6 +82,7 @@ class _TodayPageState extends State<TodayPage> {
               title: 'Almuerzo',
               description: 'Pausa para comer y recargar energia.',
               type: BlockType.visual,
+              countsTowardProgress: false,
             ),
             DayBlock(
               start: '14:00',
@@ -87,6 +90,7 @@ class _TodayPageState extends State<TodayPage> {
               title: 'Curso',
               description: 'Espacio de aprendizaje y avance profesional.',
               type: BlockType.habit,
+              countsTowardProgress: true,
             ),
           ],
         ),
@@ -284,6 +288,7 @@ class _TodayPageState extends State<TodayPage> {
     var end = existingBlock?.end ?? '';
     var title = existingBlock?.title ?? '';
     var description = existingBlock?.description ?? '';
+    var countsTowardProgress = existingBlock?.countsTowardProgress ?? true;
 
     return showDialog<DayBlock>(
       context: context,
@@ -429,6 +434,20 @@ class _TodayPageState extends State<TodayPage> {
                           });
                         },
                       ),
+                      const SizedBox(height: 12),
+                      SwitchListTile.adaptive(
+                        value: countsTowardProgress,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Contar para el progreso del d\u00EDa'),
+                        subtitle: const Text(
+                          'Desact\u00EDvalo si este bloque solo sirve como referencia o contexto.',
+                        ),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            countsTowardProgress = value;
+                          });
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -464,6 +483,7 @@ class _TodayPageState extends State<TodayPage> {
                         title: title.trim(),
                         description: description.trim(),
                         type: selectedType,
+                        countsTowardProgress: countsTowardProgress,
                         isDone: existingBlock?.isDone ?? false,
                       ),
                     );
@@ -645,14 +665,19 @@ class _TodayPageState extends State<TodayPage> {
 
   /// Calcula el progreso total de la rutina activa.
   ///
-  /// Por ahora el progreso usa todos los bloques. Mas adelante podriamos
-  /// decidir si solo ciertos tipos deben contar para esta metrica.
+  /// Regla: solo cuentan los bloques marcados como relevantes para progreso.
+  ///
+  /// Caso borde: si la rutina no tiene bloques elegibles, devolvemos 0 para
+  /// evitar divisiones por cero y para expresar que aun no hay progreso medible.
   double get progress {
-    final blocks = activeRoutine?.blocks ?? [];
-    if (blocks.isEmpty) return 0;
+    final progressBlocks = activeRoutine?.blocks
+            .where((block) => block.countsTowardProgress)
+            .toList() ??
+        [];
+    if (progressBlocks.isEmpty) return 0;
 
-    final done = blocks.where((block) => block.isDone).length;
-    return done / blocks.length;
+    final done = progressBlocks.where((block) => block.isDone).length;
+    return done / progressBlocks.length;
   }
 
   Color get progressColor {
@@ -671,7 +696,12 @@ class _TodayPageState extends State<TodayPage> {
 
     final theme = Theme.of(context);
     final blocks = activeRoutine!.blocks;
-    final completed = blocks.where((block) => block.isDone).length;
+    final progressBlocks =
+        blocks.where((block) => block.countsTowardProgress).toList();
+    final completed =
+        progressBlocks.where((block) => block.isDone).length;
+    final nonProgressBlocksCount =
+        blocks.where((block) => !block.countsTowardProgress).length;
 
     return Scaffold(
       appBar: AppBar(
@@ -729,7 +759,9 @@ class _TodayPageState extends State<TodayPage> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '$completed de ${blocks.length} bloques completados',
+                    progressBlocks.isEmpty
+                        ? 'A\u00FAn no hay bloques que cuenten para el progreso'
+                        : '$completed de ${progressBlocks.length} bloques que cuentan para progreso',
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: Colors.white70,
                     ),
@@ -747,6 +779,11 @@ class _TodayPageState extends State<TodayPage> {
                         avatar: const Icon(Icons.view_list_rounded, size: 18),
                         label: Text('${blocks.length} bloques'),
                       ),
+                      if (nonProgressBlocksCount > 0)
+                        Chip(
+                          avatar: const Icon(Icons.visibility_outlined, size: 18),
+                          label: Text('$nonProgressBlocksCount informativos'),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -912,6 +949,7 @@ class _TodayPageState extends State<TodayPage> {
                           title: block.title,
                           description: block.description,
                           type: block.type,
+                          countsTowardProgress: block.countsTowardProgress,
                           isDone: block.isDone,
                           onTap: () => toggleBlock(index),
                           secondaryAction: ReorderableDelayedDragStartListener(

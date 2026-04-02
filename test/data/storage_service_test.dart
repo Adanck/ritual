@@ -34,6 +34,7 @@ void main() {
             title: 'Ingles',
             description: 'Practica diaria',
             type: BlockType.habit,
+            countsTowardProgress: false,
             isDone: true,
           ),
         ],
@@ -51,6 +52,7 @@ void main() {
     expect(loadedRoutines.first.blocks.first.title, 'Ingles');
     expect(loadedRoutines.first.blocks.first.description, 'Practica diaria');
     expect(loadedRoutines.first.blocks.first.type, BlockType.habit);
+    expect(loadedRoutines.first.blocks.first.countsTowardProgress, isFalse);
     expect(loadedRoutines.first.blocks.first.isDone, isTrue);
   });
 }

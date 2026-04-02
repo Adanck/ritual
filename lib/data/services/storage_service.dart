@@ -24,6 +24,7 @@ class StorageService {
             'title': block.title,
             'description': block.description,
             'type': block.type.name,
+            'countsTowardProgress': block.countsTowardProgress,
             'isDone': block.isDone,
           };
         }).toList(),
@@ -54,6 +55,7 @@ class StorageService {
             type: BlockType.values.firstWhere(
               (type) => type.name == block['type'],
             ),
+            countsTowardProgress: block['countsTowardProgress'] ?? true,
             isDone: block['isDone'],
           );
         }).toList(),

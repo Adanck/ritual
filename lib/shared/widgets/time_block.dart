@@ -8,6 +8,7 @@ class TimeBlock extends StatelessWidget {
   final String title;
   final String description;
   final BlockType type;
+  final bool countsTowardProgress;
   final bool isDone;
   final VoidCallback? onTap;
   final Widget? secondaryAction;
@@ -19,6 +20,7 @@ class TimeBlock extends StatelessWidget {
     required this.title,
     required this.description,
     required this.type,
+    required this.countsTowardProgress,
     required this.isDone,
     this.onTap,
     this.secondaryAction,
@@ -68,6 +70,16 @@ class TimeBlock extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
             ),
+            if (!countsTowardProgress) ...[
+              const SizedBox(height: 4),
+              Text(
+                'No cuenta para el progreso del d\u00EDa',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.white54,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
             if (description.trim().isNotEmpty) ...[
               const SizedBox(height: 4),
               Text(

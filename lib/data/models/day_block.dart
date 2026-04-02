@@ -10,6 +10,7 @@ class DayBlock {
   final String title;
   final String description;
   final BlockType type;
+  final bool countsTowardProgress;
   bool isDone;
 
   DayBlock({
@@ -18,6 +19,7 @@ class DayBlock {
     required this.title,
     this.description = '',
     required this.type,
+    this.countsTowardProgress = true,
     this.isDone = false,
   });
 }
