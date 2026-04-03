@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ritual/core/services/notification_service.dart';
 import 'package:ritual/core/utils/date_key.dart';
 import 'package:ritual/core/utils/day_block_time_validator.dart';
 import 'package:ritual/core/utils/routine_history_insights.dart';
@@ -497,6 +498,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     }
 
     await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+    await syncNotificationsWithStoredState();
 
     if (!mounted) return;
     setState(() {});
@@ -556,6 +558,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       ];
 
       await StorageService.saveDailyRecords(dailyRecords);
+      await syncNotificationsWithStoredState();
       return;
     }
 
@@ -573,6 +576,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         );
 
       await StorageService.saveDailyRecords(dailyRecords);
+      await syncNotificationsWithStoredState();
     }
   }
 
@@ -586,12 +590,15 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
     }
 
+    await syncNotificationsWithStoredState();
+
     if (!mounted) return;
     setState(() {});
   }
 
   Future<void> saveDailyRecordsAndRefresh() async {
     await StorageService.saveDailyRecords(dailyRecords);
+    await syncNotificationsWithStoredState();
 
     if (!mounted) return;
     setState(() {});
@@ -599,6 +606,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
   Future<void> saveDatedBlocksAndRefresh() async {
     await StorageService.saveDatedBlocks(datedBlocks);
+    await syncNotificationsWithStoredState();
 
     if (!mounted) return;
     setState(() {});
@@ -606,9 +614,25 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
   Future<void> saveRoutinesAndRefresh() async {
     await StorageService.saveRoutines(routines);
+    await syncNotificationsWithStoredState();
 
     if (!mounted) return;
     setState(() {});
+  }
+
+  /// Recalcula las notificaciones futuras a partir del estado actual.
+  ///
+  /// Regla: usamos el mismo estado persistido de rutinas, historial y bloques
+  /// fechados para que las notificaciones siempre reflejen lo ultimo que el
+  /// usuario decidio en la UI.
+  Future<void> syncNotificationsWithStoredState() async {
+    await NotificationService.syncScheduledNotifications(
+      routines: routines,
+      dailyRecords: dailyRecords,
+      datedBlocks: datedBlocks,
+      activeRoutineId: activeRoutine?.id,
+      anchorDate: todayDate,
+    );
   }
 
   /// Marca o desmarca un bloque del registro diario activo y persiste el cambio.
@@ -642,6 +666,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     });
 
     await StorageService.saveDailyRecords(dailyRecords);
+    await syncNotificationsWithStoredState();
   }
 
   /// Explica al usuario como debe transformarse el plan del dia al cambiar
@@ -953,6 +978,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (getTodayRecordForRoutineId(selectedRoutine.id) != null) {
       await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
     }
+
+    await syncNotificationsWithStoredState();
 
     if (!mounted) return;
     setState(() {});
@@ -1325,6 +1352,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     });
 
     await StorageService.saveRoutines(routines);
+    await syncNotificationsWithStoredState();
 
     if (!mounted) return;
     setState(() {});
@@ -1361,6 +1389,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (activeRoutine?.id == routine.id && activeDayRecord != null) {
       await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
     }
+
+    await syncNotificationsWithStoredState();
 
     if (!mounted) return;
     setState(() {});
@@ -1430,6 +1460,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (activeDayRecord != null) {
       await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
     }
+
+    await syncNotificationsWithStoredState();
 
     if (!mounted) return;
     setState(() {});
