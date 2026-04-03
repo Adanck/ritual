@@ -233,6 +233,127 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     return '${block.start}|${block.end}|${block.title.trim().toLowerCase()}';
   }
 
+  /// Compara dos bloques por su definicion funcional, no por referencia.
+  ///
+  /// Regla: esto nos ayuda a saber si el plan de hoy ya fue modificado frente
+  /// a la plantilla original aunque todavia no existan checks completados.
+  bool isSameBlockDefinition(DayBlock a, DayBlock b) {
+    return a.id == b.id &&
+        a.start == b.start &&
+        a.end == b.end &&
+        a.title == b.title &&
+        a.description == b.description &&
+        a.type == b.type &&
+        a.countsTowardProgress == b.countsTowardProgress &&
+        a.receivesPushNotification == b.receivesPushNotification;
+  }
+
+  /// Detecta si el registro de hoy ya se desvio de la plantilla base.
+  ///
+  /// Caso borde: aunque no haya checks, si el usuario agrego, quito o edito
+  /// bloques del dia, seguimos considerando que ya hay un plan en curso.
+  bool doesRecordDifferFromRoutineTemplate(
+    DailyRecord record,
+    Routine routine,
+  ) {
+    if (record.blocks.length != routine.blocks.length) return true;
+
+    for (var index = 0; index < record.blocks.length; index++) {
+      if (!isSameBlockDefinition(record.blocks[index], routine.blocks[index])) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  int getRoutineSuggestionWeight(Routine routine) {
+    switch (routine.schedule.type) {
+      case RoutineScheduleType.customRange:
+        return 4;
+      case RoutineScheduleType.currentWeek:
+        return 3;
+      case RoutineScheduleType.currentMonth:
+        return 2;
+      case RoutineScheduleType.always:
+        return 1;
+    }
+  }
+
+  DateTime? getRoutineSuggestionStartDate(Routine routine) {
+    final startDateKey = routine.schedule.startDateKey;
+    if (startDateKey == null || startDateKey.isEmpty) return null;
+    return DateKey.toDate(startDateKey);
+  }
+
+  int compareRoutinesForTodaySuggestion(Routine a, Routine b) {
+    final weightComparison =
+        getRoutineSuggestionWeight(b).compareTo(getRoutineSuggestionWeight(a));
+    if (weightComparison != 0) return weightComparison;
+
+    final aStart = getRoutineSuggestionStartDate(a);
+    final bStart = getRoutineSuggestionStartDate(b);
+    if (aStart != null && bStart != null) {
+      final startComparison = bStart.compareTo(aStart);
+      if (startComparison != 0) return startComparison;
+    } else if (aStart == null && bStart != null) {
+      return 1;
+    } else if (aStart != null && bStart == null) {
+      return -1;
+    }
+
+    final blockCountComparison = b.blocks.length.compareTo(a.blocks.length);
+    if (blockCountComparison != 0) return blockCountComparison;
+
+    return a.name.compareTo(b.name);
+  }
+
+  List<Routine> get routinesSuggestedForToday {
+    final suggestedRoutines = routines
+        .where((routine) => routine.appliesOn(todayDate))
+        .toList()
+      ..sort(compareRoutinesForTodaySuggestion);
+
+    return suggestedRoutines;
+  }
+
+  Routine? get suggestedRoutineForToday {
+    if (routinesSuggestedForToday.isEmpty) return null;
+    return routinesSuggestedForToday.first;
+  }
+
+  Future<void> activateRoutineSilently(Routine selectedRoutine) async {
+    if (activeRoutine?.id == selectedRoutine.id) return;
+
+    for (final routine in routines) {
+      routine.isActive = routine.id == selectedRoutine.id;
+    }
+
+    activeRoutine = selectedRoutine;
+    await StorageService.saveRoutines(routines);
+  }
+
+  /// Si no hay un dia iniciado, promueve automaticamente la mejor rutina.
+  ///
+  /// Regla: no reemplazamos el plan actual si ya existe cualquier registro de
+  /// hoy, porque a partir de ahi el usuario ya pudo empezar a organizar su dia.
+  Future<void> autoSelectSuggestedRoutineIfHelpful() async {
+    if (activeRoutine == null) return;
+    if (activeRoutine!.appliesOn(todayDate)) return;
+
+    final suggestedRoutine = suggestedRoutineForToday;
+    if (suggestedRoutine == null || suggestedRoutine.id == activeRoutine!.id) {
+      return;
+    }
+
+    final hasAnyTodayRecord = dailyRecords.any(
+      (record) => record.dateKey == todayKey,
+    );
+    if (hasAnyTodayRecord) return;
+
+    await activateRoutineSilently(suggestedRoutine);
+  }
+
   int getRoutineBlockIndexById(String blockId) {
     if (activeRoutine == null) return -1;
     return activeRoutine!.blocks.indexWhere((block) => block.id == blockId);
@@ -411,12 +532,16 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // Caso borde: si la app vuelve despues de medianoche, refrescamos el
-      // registro del dia para aplicar el reset diario automatico.
-      ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
-      if (mounted) {
-        setState(() {});
-      }
+      // Caso borde: si la app vuelve despues de medianoche, recalculamos la
+      // rutina sugerida y luego refrescamos el registro del dia.
+      () async {
+        await autoSelectSuggestedRoutineIfHelpful();
+        await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
+        await syncNotificationsWithStoredState();
+        if (mounted) {
+          setState(() {});
+        }
+      }();
     }
   }
 
@@ -497,6 +622,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       }
     }
 
+    await autoSelectSuggestedRoutineIfHelpful();
     await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
     await syncNotificationsWithStoredState();
 
@@ -928,8 +1054,16 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         ? null
         : getTodayRecordForRoutineId(previousRoutine.id);
     final selectedRoutineRecord = getTodayRecordForRoutineId(selectedRoutine.id);
+    final shouldPromptForTransition =
+        previousRoutine != null &&
+        previousRecord != null &&
+        (previousRecord.hasAnyCompletedBlocks ||
+            doesRecordDifferFromRoutineTemplate(
+              previousRecord,
+              previousRoutine,
+            ));
 
-    if (previousRoutine != null && selectedRoutineRecord == null) {
+    if (shouldPromptForTransition && selectedRoutineRecord == null) {
       final currentSourceBlocks =
           previousRecord?.blocks ??
           previousRoutine.blocks.map(cloneBlockForDailyRecord).toList();
@@ -3166,8 +3300,16 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   ({String label, Color color}) buildRoutineScheduleStatus(Routine routine) {
     final daysUntilStart = routine.schedule.daysUntilStart(todayDate);
     final daysUntilEnd = routine.schedule.daysUntilEnd(todayDate);
+    final suggestedRoutine = suggestedRoutineForToday;
 
     if (routine.appliesOn(todayDate)) {
+      if (suggestedRoutine?.id == routine.id) {
+        return (
+          label: 'Recomendada hoy',
+          color: const Color(0xFF41C47B),
+        );
+      }
+
       if (daysUntilEnd == 0) {
         return (
           label: 'Termina hoy',
@@ -3183,8 +3325,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       }
 
       return (
-        label: 'Sugerida hoy',
-        color: const Color(0xFF41C47B),
+        label: 'Disponible hoy',
+        color: const Color(0xFF4DA3FF),
       );
     }
 
@@ -3369,6 +3511,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final insights = activeRoutineInsights;
     final isScheduledToday = isActiveRoutineScheduledToday;
     final routineNotices = activeRoutineNotices;
+    final suggestedRoutine = suggestedRoutineForToday;
+    final shouldOfferSuggestedRoutineSwitch =
+        suggestedRoutine != null &&
+        suggestedRoutine.id != activeRoutine!.id &&
+        suggestedRoutine.appliesOn(todayDate);
     final emptyStateDescription = isScheduledToday
         ? 'La rutina ya quedo creada. Ahora puedes agregar tu primer bloque.'
         : 'Esta rutina esta fuera de su rango sugerido para hoy, pero puedes usarla o editarla igualmente.';
@@ -3499,6 +3646,44 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           context: context,
                           notice: notice,
                         ),
+                      ),
+                    ),
+                  ],
+                  if (shouldOfferSuggestedRoutineSwitch) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF4DA3FF).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: const Color(0xFF4DA3FF).withValues(alpha: 0.18),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Rutina sugerida para hoy',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '"${suggestedRoutine!.name}" parece encajar mejor con la fecha de hoy. Puedes cambiarte con un toque o seguir usando la actual.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: Colors.white70,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          FilledButton.tonalIcon(
+                            onPressed: () => selectRoutine(suggestedRoutine!),
+                            icon: const Icon(Icons.auto_awesome_rounded),
+                            label: Text('Usar ${suggestedRoutine.name}'),
+                          ),
+                        ],
                       ),
                     ),
                   ],
