@@ -1064,9 +1064,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
             ));
 
     if (shouldPromptForTransition && selectedRoutineRecord == null) {
-      final currentSourceBlocks =
-          previousRecord?.blocks ??
-          previousRoutine.blocks.map(cloneBlockForDailyRecord).toList();
+      final currentSourceBlocks = previousRecord.blocks;
       final strategy = await showRoutineSwitchDialog(
         previousRoutine: previousRoutine,
         nextRoutine: selectedRoutine,
@@ -2562,6 +2560,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         );
   }
 
+  List<Routine> getRoutinesApplyingOnDate(DateTime date) {
+    final routinesForDate = routines.where((routine) => routine.appliesOn(date));
+    return sortRoutinesForManagement(routinesForDate);
+  }
+
   bool isSameCalendarDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
@@ -2574,6 +2577,48 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
   Color getCalendarPreviewColor({required bool hasScheduledRoutine}) {
     return hasScheduledRoutine ? const Color(0xFF4DA3FF) : Colors.white54;
+  }
+
+  ({
+    int activityDays,
+    int plannedDays,
+    int eventDays,
+    int multiRoutineDays,
+  }) getCalendarMonthSummary(DateTime monthDate) {
+    final monthEnd = DateTime(monthDate.year, monthDate.month + 1, 0);
+
+    final daysInMonth = List.generate(
+      monthEnd.day,
+      (index) => DateTime(monthDate.year, monthDate.month, index + 1),
+    );
+
+    var activityDays = 0;
+    var plannedDays = 0;
+    var eventDays = 0;
+    var multiRoutineDays = 0;
+
+    for (final day in daysInMonth) {
+      final record = getRoutineRecordForDate(day);
+      final datedEntries = getDatedBlocksForDate(DateKey.fromDate(day));
+      final routinesForDate = getRoutinesApplyingOnDate(day);
+      final hasScheduledRoutine =
+          (activeRoutine?.appliesOn(day) ?? false) || datedEntries.isNotEmpty;
+      final hasActivity =
+          (record?.hasAnyCompletedBlocks ?? false) ||
+          datedEntries.any((entry) => entry.block.isDone);
+
+      if (hasActivity) activityDays += 1;
+      if (hasScheduledRoutine) plannedDays += 1;
+      if (datedEntries.isNotEmpty) eventDays += 1;
+      if (routinesForDate.length > 1) multiRoutineDays += 1;
+    }
+
+    return (
+      activityDays: activityDays,
+      plannedDays: plannedDays,
+      eventDays: eventDays,
+      multiRoutineDays: multiRoutineDays,
+    );
   }
 
   Widget buildCalendarLegendItem({
@@ -2615,6 +2660,37 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 
+  Widget buildCalendarSummaryChip({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            '$value $label',
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget buildCalendarDayTile({
     required BuildContext context,
     required DateTime day,
@@ -2623,6 +2699,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final theme = Theme.of(context);
     final record = getRoutineRecordForDate(day);
     final datedEntries = getDatedBlocksForDate(DateKey.fromDate(day));
+    final routinesForDate = getRoutinesApplyingOnDate(day);
     final isInVisibleMonth = day.month == visibleMonth.month;
     final isToday = isSameCalendarDay(day, todayDate);
     final isFuture = isFutureCalendarDay(day);
@@ -2643,6 +2720,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         decoration: BoxDecoration(
           color: hasActivity
               ? markerColor.withValues(alpha: 0.12)
+              : routinesForDate.length > 1
+                  ? const Color(0xFF4DA3FF).withValues(alpha: 0.08)
               : Colors.white.withValues(alpha: 0.02),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
@@ -2653,34 +2732,78 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                     : Colors.white.withValues(alpha: 0.04),
           ),
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Stack(
           children: [
-            Text(
-              day.day.toString(),
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: isInVisibleMonth ? null : Colors.white38,
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    day.day.toString(),
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: isInVisibleMonth ? null : Colors.white38,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (hasActivity)
+                        Icon(
+                          Icons.local_fire_department_rounded,
+                          size: 16,
+                          color: markerColor,
+                        )
+                      else if (hasScheduledRoutine && isFuture)
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary
+                                .withValues(alpha: 0.7),
+                            shape: BoxShape.circle,
+                          ),
+                        )
+                      else
+                        const SizedBox(width: 16, height: 16),
+                      if (datedEntries.isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.event_available_rounded,
+                          size: 14,
+                          color: const Color(0xFFFF7A6B).withValues(
+                            alpha: 0.92,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 6),
-            if (hasActivity)
-              Icon(
-                Icons.local_fire_department_rounded,
-                size: 16,
-                color: markerColor,
-              )
-            else if (hasScheduledRoutine && isFuture)
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.primary.withValues(alpha: 0.7),
-                  shape: BoxShape.circle,
+            if (routinesForDate.length > 1)
+              Positioned(
+                top: 0,
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4DA3FF).withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${routinesForDate.length}',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: const Color(0xFF4DA3FF),
+                    ),
+                  ),
                 ),
-              )
-            else
-              const SizedBox(height: 16),
+              ),
           ],
         ),
       ),
@@ -2696,6 +2819,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     final record = getRoutineRecordForDate(date);
     final datedEntries = getDatedBlocksForDate(DateKey.fromDate(date));
+    final routinesForDate = getRoutinesApplyingOnDate(date);
+    final suggestedRoutine = routinesForDate.isEmpty ? null : routinesForDate.first;
     final datedBlocksForDate = datedEntries.map((entry) => entry.block).toList();
     final recordAndReminderBlocks = record == null
         ? <DayBlock>[]
@@ -2796,6 +2921,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                             '${recordAndReminderBlocks.where((block) => block.isDone).length} completados',
                           ),
                         ),
+                        if (routinesForDate.length > 1)
+                          Chip(
+                            avatar:
+                                const Icon(Icons.layers_rounded, size: 18),
+                            label: Text('${routinesForDate.length} rutinas aplican'),
+                          ),
                       ],
                     )
                   else if (hasScheduledRoutine)
@@ -2813,6 +2944,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                               const Icon(Icons.view_list_rounded, size: 18),
                           label: Text('${previewAndReminderBlocks.length} bloques'),
                         ),
+                        if (routinesForDate.length > 1)
+                          Chip(
+                            avatar:
+                                const Icon(Icons.layers_rounded, size: 18),
+                            label: Text('${routinesForDate.length} rutinas aplican'),
+                          ),
                       ],
                     )
                   else
@@ -2830,6 +2967,58 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                       backgroundColor: Colors.white12,
                     ),
                   ),
+                  if (routinesForDate.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.04),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.06),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Rutinas que aplican en esta fecha',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            suggestedRoutine == null
+                                ? 'No hay una sugerencia clara para este dia.'
+                                : 'La rutina recomendada para esta fecha es "${suggestedRoutine.name}".',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: Colors.white70,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: routinesForDate.take(4).map((routine) {
+                              final isRecommended =
+                                  routine.id == suggestedRoutine?.id;
+                              return Chip(
+                                avatar: Icon(
+                                  isRecommended
+                                      ? Icons.auto_awesome_rounded
+                                      : Icons.event_repeat_rounded,
+                                  size: 18,
+                                ),
+                                label: Text(routine.name),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   if (!DateTime(date.year, date.month, date.day).isBefore(
                     DateTime(todayDate.year, todayDate.month, todayDate.day),
                   )) ...[
@@ -2936,12 +3125,21 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                       ),
                                       const SizedBox(height: 8),
                                       Text(
-                                        'Puedes crear o editar una rutina con rango de fechas para planificar este dia.',
+                                        'Puedes crear o editar una rutina con rango de fechas para planificar este dia, o dejar un bloque puntual si solo necesitas algo aislado.',
                                         textAlign: TextAlign.center,
                                         style:
                                             theme.textTheme.bodyMedium?.copyWith(
                                           color: Colors.white70,
                                         ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      FilledButton.tonalIcon(
+                                        onPressed: () async {
+                                          Navigator.of(context).pop();
+                                          await showRoutineManagerSheet();
+                                        },
+                                        icon: const Icon(Icons.tune_rounded),
+                                        label: const Text('Gestionar rutinas'),
                                       ),
                                     ],
                                   ),
@@ -2973,6 +3171,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           builder: (context, setSheetState) {
             final theme = Theme.of(context);
             final calendarDays = buildCalendarGridDays(visibleMonth);
+            final monthSummary = getCalendarMonthSummary(visibleMonth);
             final formattedMonth =
                 DateKey.formatForDisplay(DateKey.fromDate(visibleMonth));
             final parts = formattedMonth.split(' ');
@@ -3043,6 +3242,51 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                               icon: const Icon(Icons.chevron_right_rounded),
                             ),
                           ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          buildCalendarSummaryChip(
+                            context: context,
+                            icon: Icons.local_fire_department_outlined,
+                            label: 'con actividad',
+                            value: '${monthSummary.activityDays}',
+                          ),
+                          buildCalendarSummaryChip(
+                            context: context,
+                            icon: Icons.event_note_rounded,
+                            label: 'planificados',
+                            value: '${monthSummary.plannedDays}',
+                          ),
+                          buildCalendarSummaryChip(
+                            context: context,
+                            icon: Icons.event_available_rounded,
+                            label: 'con eventos',
+                            value: '${monthSummary.eventDays}',
+                          ),
+                          if (monthSummary.multiRoutineDays > 0)
+                            buildCalendarSummaryChip(
+                              context: context,
+                              icon: Icons.layers_rounded,
+                              label: 'con varias rutinas',
+                              value: '${monthSummary.multiRoutineDays}',
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            setSheetState(() {
+                              visibleMonth = calendarMonthAnchor;
+                            });
+                          },
+                          icon: const Icon(Icons.today_rounded),
+                          label: const Text('Volver a hoy'),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -3118,6 +3362,37 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                               ),
                             ),
                             label: 'Dia futuro planificado',
+                          ),
+                          buildCalendarLegendItem(
+                            context: context,
+                            marker: const Icon(
+                              Icons.event_available_rounded,
+                              size: 14,
+                              color: Color(0xFFFF7A6B),
+                            ),
+                            label: 'Evento puntual',
+                          ),
+                          buildCalendarLegendItem(
+                            context: context,
+                            marker: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF4DA3FF)
+                                    .withValues(alpha: 0.18),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                '2+',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF4DA3FF),
+                                ),
+                              ),
+                            ),
+                            label: 'Varias rutinas aplican',
                           ),
                         ],
                       ),
@@ -4037,14 +4312,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '"${suggestedRoutine!.name}" parece encajar mejor con la fecha de hoy. Puedes cambiarte con un toque o seguir usando la actual.',
+                            '"${suggestedRoutine.name}" parece encajar mejor con la fecha de hoy. Puedes cambiarte con un toque o seguir usando la actual.',
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: Colors.white70,
                             ),
                           ),
                           const SizedBox(height: 10),
                           FilledButton.tonalIcon(
-                            onPressed: () => selectRoutine(suggestedRoutine!),
+                            onPressed: () => selectRoutine(suggestedRoutine),
                             icon: const Icon(Icons.auto_awesome_rounded),
                             label: Text('Usar ${suggestedRoutine.name}'),
                           ),
