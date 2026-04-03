@@ -1601,6 +1601,37 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     setState(() {});
   }
 
+  /// Crea una copia editable de una rutina existente.
+  ///
+  /// Regla: duplicamos tambien los bloques con ids nuevos para que la copia no
+  /// comparta identidad con la rutina original y pueda evolucionar por
+  /// separado en el futuro.
+  Future<void> duplicateRoutine(Routine routine) async {
+    final timestamp = DateTime.now().microsecondsSinceEpoch;
+    final duplicatedRoutine = Routine(
+      id: '$timestamp-routine-copy',
+      name: '${routine.name} copia',
+      isActive: false,
+      schedule: routine.schedule.copyWith(),
+      blocks: routine.blocks
+          .asMap()
+          .entries
+          .map(
+            (entry) => entry.value.copyWith(
+              id: '$timestamp-block-copy-${entry.key}',
+              isDone: false,
+            ),
+          )
+          .toList(),
+    );
+
+    setState(() {
+      routines = [...routines, duplicatedRoutine];
+    });
+
+    await saveRoutinesAndRefresh();
+  }
+
   /// Abre el selector nativo de hora y devuelve el valor ya formateado.
   Future<String?> pickTime({
     required BuildContext context,
@@ -3146,6 +3177,15 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         icon: const Icon(Icons.add),
                         label: const Text('Nueva'),
                       ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          Navigator.of(context).pop();
+                          await showRoutineManagerSheet();
+                        },
+                        icon: const Icon(Icons.tune_rounded),
+                        label: const Text('Gestionar'),
+                      ),
                     ],
                   ),
                 ),
@@ -3242,6 +3282,162 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (selectedRoutine != null) {
       await selectRoutine(selectedRoutine);
     }
+  }
+
+  /// Abre una vista mas completa para administrar rutinas por periodo.
+  ///
+  /// Aqui agrupamos las rutinas segun su relacion con la fecha actual para que
+  /// sea mas facil mantener varias variantes sin depender solo del selector
+  /// rapido del dia a dia.
+  Future<void> showRoutineManagerSheet() async {
+    if (routines.isEmpty) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+        final recommendedToday = sortRoutinesForManagement(
+          routines.where((routine) => routine.id == suggestedRoutineForToday?.id),
+        );
+        final availableToday = sortRoutinesForManagement(
+          routines.where(
+            (routine) =>
+                routine.appliesOn(todayDate) &&
+                routine.id != suggestedRoutineForToday?.id,
+          ),
+        );
+        final upcomingRoutines = sortRoutinesForManagement(
+          routines.where(
+            (routine) =>
+                !routine.appliesOn(todayDate) && isRoutineUpcoming(routine),
+          ),
+        );
+        final expiredOrDormantRoutines = sortRoutinesForManagement(
+          routines.where(
+            (routine) =>
+                !routine.appliesOn(todayDate) && !isRoutineUpcoming(routine),
+          ),
+        );
+
+        Future<void> handleAction(
+          Future<void> Function() action,
+        ) async {
+          Navigator.of(context).pop();
+          await action();
+        }
+
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.9,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Administrar rutinas',
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      FilledButton.icon(
+                        onPressed: () async {
+                          Navigator.of(context).pop();
+                          await createRoutine();
+                        },
+                        icon: const Icon(Icons.add),
+                        label: const Text('Nueva'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Aqui puedes ordenar mejor tus rutinas por vigencia, revisar cual conviene hoy y mantener preparadas las que vienen despues.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.white70,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: ListView(
+                      children: [
+                        buildRoutineManagerSection(
+                          context: context,
+                          title: 'Recomendada para hoy',
+                          description:
+                              'La rutina que mejor encaja con la fecha actual segun su vigencia.',
+                          routinesInSection: recommendedToday,
+                          onSelect: (routine) =>
+                              handleAction(() => selectRoutine(routine)),
+                          onEdit: (routine) =>
+                              handleAction(() => editRoutine(routine)),
+                          onDuplicate: (routine) =>
+                              handleAction(() => duplicateRoutine(routine)),
+                          onDelete: (routine) =>
+                              handleAction(() => deleteRoutine(routine)),
+                        ),
+                        buildRoutineManagerSection(
+                          context: context,
+                          title: 'Tambien disponibles hoy',
+                          description:
+                              'Rutinas vigentes que puedes usar hoy aunque no sean la recomendada principal.',
+                          routinesInSection: availableToday,
+                          onSelect: (routine) =>
+                              handleAction(() => selectRoutine(routine)),
+                          onEdit: (routine) =>
+                              handleAction(() => editRoutine(routine)),
+                          onDuplicate: (routine) =>
+                              handleAction(() => duplicateRoutine(routine)),
+                          onDelete: (routine) =>
+                              handleAction(() => deleteRoutine(routine)),
+                        ),
+                        buildRoutineManagerSection(
+                          context: context,
+                          title: 'Proximas por iniciar',
+                          description:
+                              'Rutinas futuras que ya puedes dejar listas antes de que les llegue su turno.',
+                          routinesInSection: upcomingRoutines,
+                          onSelect: (routine) =>
+                              handleAction(() => selectRoutine(routine)),
+                          onEdit: (routine) =>
+                              handleAction(() => editRoutine(routine)),
+                          onDuplicate: (routine) =>
+                              handleAction(() => duplicateRoutine(routine)),
+                          onDelete: (routine) =>
+                              handleAction(() => deleteRoutine(routine)),
+                        ),
+                        buildRoutineManagerSection(
+                          context: context,
+                          title: 'Fuera de rango o archivables',
+                          description:
+                              'Rutinas vencidas o no activas por fecha. Puedes reusarlas, duplicarlas o limpiarlas.',
+                          routinesInSection: expiredOrDormantRoutines,
+                          onSelect: (routine) =>
+                              handleAction(() => selectRoutine(routine)),
+                          onEdit: (routine) =>
+                              handleAction(() => editRoutine(routine)),
+                          onDuplicate: (routine) =>
+                              handleAction(() => duplicateRoutine(routine)),
+                          onDelete: (routine) =>
+                              handleAction(() => deleteRoutine(routine)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   /// Calcula el progreso total de la rutina activa.
@@ -3361,6 +3557,175 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     return (
       label: 'Fuera del rango sugerido',
       color: Colors.white54,
+    );
+  }
+
+  bool isRoutineUpcoming(Routine routine) {
+    final daysUntilStart = routine.schedule.daysUntilStart(todayDate);
+    return daysUntilStart != null && daysUntilStart >= 0;
+  }
+
+  bool isRoutineExpired(Routine routine) {
+    return routine.schedule.hasEndedBy(todayDate);
+  }
+
+  int compareRoutinesForManagement(Routine a, Routine b) {
+    final availabilityComparison =
+        (a.appliesOn(todayDate) ? 0 : 1).compareTo(b.appliesOn(todayDate) ? 0 : 1);
+    if (availabilityComparison != 0) return availabilityComparison;
+
+    final upcomingComparison =
+        (isRoutineUpcoming(a) ? 0 : 1).compareTo(isRoutineUpcoming(b) ? 0 : 1);
+    if (upcomingComparison != 0) return upcomingComparison;
+
+    return compareRoutinesForTodaySuggestion(a, b);
+  }
+
+  List<Routine> sortRoutinesForManagement(Iterable<Routine> source) {
+    final sortedRoutines = source.toList()..sort(compareRoutinesForManagement);
+    return sortedRoutines;
+  }
+
+  Widget buildRoutineManagerSection({
+    required BuildContext context,
+    required String title,
+    required String description,
+    required List<Routine> routinesInSection,
+    required void Function(Routine routine) onSelect,
+    required void Function(Routine routine) onEdit,
+    required void Function(Routine routine) onDuplicate,
+    required void Function(Routine routine) onDelete,
+  }) {
+    final theme = Theme.of(context);
+
+    if (routinesInSection.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            description,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: Colors.white70,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ...routinesInSection.map((routine) {
+            final scheduleStatus = buildRoutineScheduleStatus(routine);
+            final isSelected = routine.id == activeRoutine?.id;
+            final daysUntilStart = routine.schedule.daysUntilStart(todayDate);
+            final daysUntilEnd = routine.schedule.daysUntilEnd(todayDate);
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 10),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            routine.name,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        if (isSelected)
+                          Icon(
+                            Icons.check_circle_rounded,
+                            color: theme.colorScheme.primary,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        Chip(
+                          avatar: const Icon(Icons.view_list_rounded, size: 18),
+                          label: Text('${routine.blocks.length} bloques'),
+                        ),
+                        Chip(
+                          avatar: const Icon(Icons.date_range_rounded, size: 18),
+                          label: Text(routine.schedule.shortLabel),
+                        ),
+                        Chip(
+                          avatar: Icon(Icons.schedule_rounded, size: 18),
+                          label: Text(scheduleStatus.label),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      routine.schedule.displayLabel,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    ),
+                    if (daysUntilStart != null || daysUntilEnd != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        [
+                          if (daysUntilStart != null)
+                            'Empieza en $daysUntilStart dias',
+                          if (daysUntilEnd != null)
+                            'Termina en $daysUntilEnd dias',
+                        ].join(' | '),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: Colors.white54,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        FilledButton.tonalIcon(
+                          onPressed: () => onSelect(routine),
+                          icon: const Icon(Icons.playlist_add_check_rounded),
+                          label: Text(isSelected ? 'Activa' : 'Usar'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => onEdit(routine),
+                          icon: const Icon(Icons.edit_note_rounded),
+                          label: const Text('Editar'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => onDuplicate(routine),
+                          icon: const Icon(Icons.copy_rounded),
+                          label: const Text('Duplicar'),
+                        ),
+                        if (routines.length > 1)
+                          OutlinedButton.icon(
+                            onPressed: () => onDelete(routine),
+                            icon: const Icon(Icons.delete_outline_rounded),
+                            label: const Text('Eliminar'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
     );
   }
 
