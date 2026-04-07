@@ -72,6 +72,77 @@ class TodayRoutineUtils {
     return suggestedRoutines;
   }
 
+  /// Resume el estado temporal actual de una rutina para chips y listas.
+  static ({String label, Color color}) buildScheduleStatus({
+    required Routine routine,
+    required DateTime todayDate,
+    String? suggestedRoutineId,
+  }) {
+    final daysUntilStart = routine.schedule.daysUntilStart(todayDate);
+    final daysUntilEnd = routine.schedule.daysUntilEnd(todayDate);
+
+    if (routine.appliesOn(todayDate)) {
+      if (suggestedRoutineId == routine.id) {
+        return (
+          label: 'Recomendada hoy',
+          color: const Color(0xFF41C47B),
+        );
+      }
+
+      if (daysUntilEnd == 0) {
+        return (
+          label: 'Termina hoy',
+          color: const Color(0xFFFFA24D),
+        );
+      }
+
+      if (daysUntilEnd != null && daysUntilEnd <= 2) {
+        return (
+          label: 'Termina en $daysUntilEnd dias',
+          color: const Color(0xFFFFA24D),
+        );
+      }
+
+      return (
+        label: 'Disponible hoy',
+        color: const Color(0xFF4DA3FF),
+      );
+    }
+
+    if (daysUntilStart == 0) {
+      return (
+        label: 'Empieza hoy',
+        color: const Color(0xFF4DA3FF),
+      );
+    }
+
+    if (daysUntilStart == 1) {
+      return (
+        label: 'Empieza manana',
+        color: const Color(0xFF4DA3FF),
+      );
+    }
+
+    if (daysUntilStart != null && daysUntilStart <= 7) {
+      return (
+        label: 'Empieza en $daysUntilStart dias',
+        color: const Color(0xFF4DA3FF),
+      );
+    }
+
+    if (routine.schedule.hasEndedBy(todayDate)) {
+      return (
+        label: 'Rango ya vencido',
+        color: Colors.white54,
+      );
+    }
+
+    return (
+      label: 'Fuera del rango sugerido',
+      color: Colors.white54,
+    );
+  }
+
   static List<RoutineNotice> buildActiveRoutineNotices({
     required Routine activeRoutine,
     required List<Routine> routines,

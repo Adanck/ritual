@@ -57,6 +57,10 @@ void main() {
     expect(insights.trackedDays, 2);
     expect(insights.completedDays, 1);
     expect(insights.completionRate, 0.5);
+    expect(insights.completedDayRate, 0.5);
+    expect(insights.progressBlocksCompleted, 1);
+    expect(insights.progressBlocksTracked, 2);
+    expect(insights.lastActiveDateKey, '2026-04-01');
   });
 
   test('returns zero completion rate when no blocks count toward progress', () {
@@ -74,5 +78,26 @@ void main() {
 
     expect(insights.completionRate, 0);
     expect(insights.trackedDays, 0);
+    expect(insights.weeklyCompletionRate, 0);
+    expect(insights.monthlyCompletionRate, 0);
+  });
+
+  test('calculates best streak and rolling weekly monthly completion', () {
+    final insights = RoutineHistoryCalculator.calculate(
+      records: [
+        buildRecord(dateKey: '2026-03-10', done: true),
+        buildRecord(dateKey: '2026-03-11', done: true),
+        buildRecord(dateKey: '2026-03-12', done: true),
+        buildRecord(dateKey: '2026-04-01', done: true),
+        buildRecord(dateKey: '2026-04-02', done: false),
+        buildRecord(dateKey: '2026-04-03', done: true),
+      ],
+      routineId: 'normal',
+      today: DateTime(2026, 4, 3),
+    );
+
+    expect(insights.bestStreak, 3);
+    expect(insights.weeklyCompletionRate, closeTo(2 / 3, 0.0001));
+    expect(insights.monthlyCompletionRate, closeTo(5 / 6, 0.0001));
   });
 }

@@ -17,6 +17,7 @@ import 'package:ritual/data/models/routine.dart';
 import 'package:ritual/data/models/routine_schedule.dart';
 import 'package:ritual/data/services/storage_service.dart';
 import 'package:ritual/features/settings/settings_page.dart';
+import 'package:ritual/features/stats/stats_page.dart';
 import 'package:ritual/shared/widgets/today_calendar_widgets.dart';
 import 'package:ritual/shared/widgets/time_block.dart';
 
@@ -165,17 +166,34 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (activeRoutine == null) {
       return const RoutineHistoryInsights(
         currentStreak: 0,
+        bestStreak: 0,
         activeDays: 0,
         trackedDays: 0,
         completedDays: 0,
         completedBlocks: 0,
+        progressBlocksCompleted: 0,
+        progressBlocksTracked: 0,
         completionRate: 0,
+        completedDayRate: 0,
+        weeklyCompletionRate: 0,
+        monthlyCompletionRate: 0,
+        lastActiveDateKey: null,
       );
     }
 
     return RoutineHistoryCalculator.calculate(
       records: dailyRecords,
       routineId: activeRoutine!.id,
+    );
+  }
+
+  /// Calcula insights historicos para cualquier rutina sin depender de que sea
+  /// la rutina activa. Esto alimenta la gestion por periodo.
+  RoutineHistoryInsights getRoutineInsights(Routine routine) {
+    return RoutineHistoryCalculator.calculate(
+      records: dailyRecords,
+      routineId: routine.id,
+      today: todayDate,
     );
   }
 
@@ -3655,12 +3673,43 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.auto_awesome_rounded,
+                        label: 'recomendada',
+                        value: '${recommendedToday.length}',
+                      ),
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.today_outlined,
+                        label: 'vigentes',
+                        value: '${recommendedToday.length + availableToday.length}',
+                      ),
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.upcoming_rounded,
+                        label: 'proximas',
+                        value: '${upcomingRoutines.length}',
+                      ),
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.inventory_2_outlined,
+                        label: 'biblioteca',
+                        value: '${expiredOrDormantRoutines.length}',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
                   Expanded(
                     child: ListView(
                       children: [
                         buildRoutineManagerSection(
                           context: context,
-                          title: 'Recomendada para hoy',
+                          title: 'Recomendada para hoy (${recommendedToday.length})',
                           description:
                               'La rutina que mejor encaja con la fecha actual segun su vigencia.',
                           routinesInSection: recommendedToday,
@@ -3675,7 +3724,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         ),
                         buildRoutineManagerSection(
                           context: context,
-                          title: 'Tambien disponibles hoy',
+                          title: 'Tambien disponibles hoy (${availableToday.length})',
                           description:
                               'Rutinas vigentes que puedes usar hoy aunque no sean la recomendada principal.',
                           routinesInSection: availableToday,
@@ -3690,7 +3739,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         ),
                         buildRoutineManagerSection(
                           context: context,
-                          title: 'Proximas por iniciar',
+                          title: 'Proximas por iniciar (${upcomingRoutines.length})',
                           description:
                               'Rutinas futuras que ya puedes dejar listas antes de que les llegue su turno.',
                           routinesInSection: upcomingRoutines,
@@ -3705,7 +3754,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         ),
                         buildRoutineManagerSection(
                           context: context,
-                          title: 'Fuera de rango o archivables',
+                          title:
+                              'Fuera de rango o archivables (${expiredOrDormantRoutines.length})',
                           description:
                               'Rutinas vencidas o no activas por fecha. Puedes reusarlas, duplicarlas o limpiarlas.',
                           routinesInSection: expiredOrDormantRoutines,
@@ -3779,74 +3829,63 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 
+  /// Formatea una metrica porcentual para superficies pequenas como chips.
+  String formatPercentValue(double value) {
+    return '${(value * 100).round()}%';
+  }
+
+  /// Resume la ultima actividad historica de una rutina.
+  String buildLastActiveLabel(RoutineHistoryInsights insights) {
+    final lastActiveDateKey = insights.lastActiveDateKey;
+    if (lastActiveDateKey == null) return 'Sin actividad registrada';
+    return 'Ultima actividad: ${DateKey.formatForDisplay(lastActiveDateKey)}';
+  }
+
+  /// Da una lectura practica del estado de una rutina para la vista de gestion.
+  ///
+  /// La idea es que el usuario no vea solo fechas, sino una pista breve de que
+  /// tan preparada o usada esta esa rutina.
+  String buildRoutineManagementHint(
+    Routine routine,
+    RoutineHistoryInsights insights,
+  ) {
+    final daysUntilStart = routine.schedule.daysUntilStart(todayDate);
+    final daysUntilEnd = routine.schedule.daysUntilEnd(todayDate);
+
+    if (routine.appliesOn(todayDate) && daysUntilEnd == 0) {
+      return 'Hoy es su ultimo dia sugerido. Conviene decidir si la extiendes o pasas a la siguiente.';
+    }
+
+    if (routine.appliesOn(todayDate) &&
+        daysUntilEnd != null &&
+        daysUntilEnd <= 2) {
+      return 'Su periodo termina pronto. Puede ser buen momento para preparar el siguiente plan.';
+    }
+
+    if (daysUntilStart != null && daysUntilStart <= 7) {
+      return 'Empieza pronto. Puedes dejarla afinada desde ahora para no improvisar cuando llegue su turno.';
+    }
+
+    if (insights.trackedDays == 0) {
+      return 'Aun no tiene historial. Es una buena base para preparar una nueva etapa o experimento.';
+    }
+
+    if (routine.schedule.hasEndedBy(todayDate)) {
+      return 'Ya no esta en su rango sugerido, pero queda como referencia reutilizable o plantilla para duplicar.';
+    }
+
+    return buildLastActiveLabel(insights);
+  }
+
   /// Resume la vigencia de una rutina para listas compactas.
   ///
   /// Regla: mostramos un solo mensaje accionable para que el usuario entienda
   /// rapido si la rutina aplica hoy, si empieza pronto o si ya vencio.
   ({String label, Color color}) buildRoutineScheduleStatus(Routine routine) {
-    final daysUntilStart = routine.schedule.daysUntilStart(todayDate);
-    final daysUntilEnd = routine.schedule.daysUntilEnd(todayDate);
-    final suggestedRoutine = suggestedRoutineForToday;
-
-    if (routine.appliesOn(todayDate)) {
-      if (suggestedRoutine?.id == routine.id) {
-        return (
-          label: 'Recomendada hoy',
-          color: const Color(0xFF41C47B),
-        );
-      }
-
-      if (daysUntilEnd == 0) {
-        return (
-          label: 'Termina hoy',
-          color: const Color(0xFFFFA24D),
-        );
-      }
-
-      if (daysUntilEnd != null && daysUntilEnd <= 2) {
-        return (
-          label: 'Termina en $daysUntilEnd d\u00EDas',
-          color: const Color(0xFFFFA24D),
-        );
-      }
-
-      return (
-        label: 'Disponible hoy',
-        color: const Color(0xFF4DA3FF),
-      );
-    }
-
-    if (daysUntilStart == 0) {
-      return (
-        label: 'Empieza hoy',
-        color: const Color(0xFF4DA3FF),
-      );
-    }
-
-    if (daysUntilStart == 1) {
-      return (
-        label: 'Empieza ma\u00F1ana',
-        color: const Color(0xFF4DA3FF),
-      );
-    }
-
-    if (daysUntilStart != null && daysUntilStart <= 7) {
-      return (
-        label: 'Empieza en $daysUntilStart d\u00EDas',
-        color: const Color(0xFF4DA3FF),
-      );
-    }
-
-    if (routine.schedule.hasEndedBy(todayDate)) {
-      return (
-        label: 'Rango ya vencido',
-        color: Colors.white54,
-      );
-    }
-
-    return (
-      label: 'Fuera del rango sugerido',
-      color: Colors.white54,
+    return TodayRoutineUtils.buildScheduleStatus(
+      routine: routine,
+      todayDate: todayDate,
+      suggestedRoutineId: suggestedRoutineForToday?.id,
     );
   }
 
@@ -3916,6 +3955,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
             final isSelected = routine.id == activeRoutine?.id;
             final daysUntilStart = routine.schedule.daysUntilStart(todayDate);
             final daysUntilEnd = routine.schedule.daysUntilEnd(todayDate);
+            final insights = getRoutineInsights(routine);
+            final routineHint = buildRoutineManagementHint(routine, insights);
 
             return Card(
               margin: const EdgeInsets.only(bottom: 10),
@@ -3955,8 +3996,29 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           label: Text(routine.schedule.shortLabel),
                         ),
                         Chip(
-                          avatar: Icon(Icons.schedule_rounded, size: 18),
+                          backgroundColor: scheduleStatus.color.withValues(
+                            alpha: 0.14,
+                          ),
+                          side: BorderSide(
+                            color: scheduleStatus.color.withValues(alpha: 0.24),
+                          ),
+                          avatar: Icon(
+                            Icons.schedule_rounded,
+                            size: 18,
+                            color: scheduleStatus.color,
+                          ),
                           label: Text(scheduleStatus.label),
+                        ),
+                        Chip(
+                          avatar: const Icon(
+                            Icons.local_fire_department_outlined,
+                            size: 18,
+                          ),
+                          label: Text('Racha ${insights.currentStreak}'),
+                        ),
+                        Chip(
+                          avatar: const Icon(Icons.show_chart_rounded, size: 18),
+                          label: Text('7d ${formatPercentValue(insights.weeklyCompletionRate)}'),
                         ),
                       ],
                     ),
@@ -3981,6 +4043,42 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         ),
                       ),
                     ],
+                    const SizedBox(height: 8),
+                    Text(
+                      routineHint,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        buildInsightChip(
+                          context: context,
+                          icon: Icons.task_alt_outlined,
+                          label: 'completos',
+                          value:
+                              '${insights.completedDays}/${insights.trackedDays}',
+                        ),
+                        buildInsightChip(
+                          context: context,
+                          icon: Icons.percent_rounded,
+                          label: '30d',
+                          value: formatPercentValue(
+                            insights.monthlyCompletionRate,
+                          ),
+                        ),
+                        buildInsightChip(
+                          context: context,
+                          icon: Icons.checklist_rounded,
+                          label: 'bloques',
+                          value:
+                              '${insights.progressBlocksCompleted}/${insights.progressBlocksTracked}',
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 12),
                     Wrap(
                       spacing: 8,
@@ -4124,6 +4222,23 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     setState(() {});
 
     showFeedbackMessage('Ajustes guardados.');
+  }
+
+  /// Abre la pantalla dedicada de estadisticas usando el estado ya cargado en
+  /// memoria. Asi evitamos recargas innecesarias y mantenemos la navegacion
+  /// rapida.
+  Future<void> openStatsPage() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => StatsPage(
+          routines: routines,
+          dailyRecords: dailyRecords,
+          todayDate: todayDate,
+          activeRoutineId: activeRoutine?.id,
+          suggestedRoutineId: suggestedRoutineForToday?.id,
+        ),
+      ),
+    );
   }
 
   Widget buildNotificationStatusCard({
@@ -4538,6 +4653,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: IconButton(
+              tooltip: 'Estadisticas',
+              onPressed: openStatsPage,
+              icon: const Icon(Icons.insights_rounded),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: IconButton(
               tooltip: 'Ajustes',
               onPressed: openSettingsPage,
               icon: const Icon(Icons.settings_rounded),
@@ -4732,6 +4855,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                       ),
                       buildInsightChip(
                         context: context,
+                        icon: Icons.workspace_premium_outlined,
+                        label: 'mejor racha',
+                        value: '${insights.bestStreak}',
+                      ),
+                      buildInsightChip(
+                        context: context,
                         icon: Icons.calendar_today_outlined,
                         label: 'd\u00EDas activos',
                         value: '${insights.activeDays}',
@@ -4740,7 +4869,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         context: context,
                         icon: Icons.percent_rounded,
                         label: 'cumplimiento',
-                        value: '${(insights.completionRate * 100).round()}%',
+                        value: formatPercentValue(insights.completionRate),
                       ),
                       buildInsightChip(
                         context: context,
@@ -4748,7 +4877,40 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         label: 'bloques',
                         value: '${insights.completedBlocks}',
                       ),
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.calendar_view_week_outlined,
+                        label: '7d',
+                        value: formatPercentValue(insights.weeklyCompletionRate),
+                      ),
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.calendar_month_outlined,
+                        label: '30d',
+                        value: formatPercentValue(insights.monthlyCompletionRate),
+                      ),
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.verified_outlined,
+                        label: 'dias completos',
+                        value:
+                            '${insights.completedDays}/${insights.trackedDays}',
+                      ),
+                      buildInsightChip(
+                        context: context,
+                        icon: Icons.av_timer_rounded,
+                        label: 'progreso',
+                        value:
+                            '${insights.progressBlocksCompleted}/${insights.progressBlocksTracked}',
+                      ),
                     ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    buildLastActiveLabel(insights),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.white54,
+                    ),
                   ),
                 ],
               ),
