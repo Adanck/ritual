@@ -82,7 +82,17 @@ Al momento de escribir este archivo, esto ya existe y funciona:
 - selector de rutinas
 - creacion de rutina nueva
 - renombrado de rutina existente
+- duplicado de rutinas
+- eliminacion segura de rutinas
 - una sola rutina activa a la vez
+- vigencia configurable por rutina:
+  - siempre
+  - semana actual
+  - mes actual
+  - rango personalizado
+- sugerencia automatica de la mejor rutina para hoy cuando aplica
+- administracion de rutinas por periodo y estado temporal
+- avisos cuando una rutina esta por empezar, terminar o quedar fuera del rango sugerido
 
 ### Bloques
 
@@ -99,6 +109,12 @@ Al momento de escribir este archivo, esto ya existe y funciona:
 - reordenamiento de bloques
 - seleccion de hora con picker nativo de Flutter
 - validacion basica para que la hora final sea mayor que la inicial
+- validacion de traslapes con confirmacion explicita del usuario
+- alcance de cambios:
+  - solo hoy
+  - toda la rutina
+- propiedad `countsTowardProgress`
+- propiedad `receivesPushNotification`
 
 ### Interacciones
 
@@ -107,6 +123,28 @@ Al momento de escribir este archivo, esto ya existe y funciona:
 - swipe a la izquierda para eliminar
 - icono de completado con animacion suave
 - handle visual para reordenar bloques
+
+### Historial, calendario y eventos
+
+- historial diario separado de la plantilla de rutina
+- reset diario automatico basado en registros por fecha
+- streaks o rachas
+- estadisticas basicas
+- calendario mensual con navegacion por meses
+- detalle por fecha con:
+  - registro real
+  - vista previa futura
+  - estado vacio explicativo
+- bloques o eventos puntuales por fecha
+- edicion y eliminacion de eventos puntuales desde el detalle del calendario
+
+### Notificaciones
+
+- base de notificaciones locales en dispositivo
+- diagnostico visible en la pantalla principal
+- prueba manual de notificacion
+- reagendado de recordatorios desde la UI
+- soporte web limitado: conserva la preferencia, pero no agenda notificaciones locales
 
 ## 5. Decisiones de producto ya tomadas
 
@@ -122,14 +160,22 @@ En el futuro, si hace falta distinguir entre bloques informativos y bloques medi
 
 Tambien se decidio seguir la misma filosofia para notificaciones: cuando llegue esa etapa, cada bloque deberia poder definir explicitamente si quiere recibir recordatorio push, en lugar de inferirlo automaticamente por su tipo.
 
-3. La UX prioriza rapidez para el uso cotidiano.
+3. La vigencia de una rutina debe servir principalmente como sugerencia y organizacion, no como bloqueo duro.
+
+El usuario puede seguir viendo o usando otras rutinas aunque no sean la recomendada para hoy.
+
+4. Una sola rutina activa sigue siendo el comportamiento base de la app por ahora.
+
+Sin embargo, queda anotada como idea futura la posibilidad de permitir varias rutinas en un mismo dia, por ejemplo una rutina de manana y otra de tarde, si eso aporta flexibilidad real sin complicar demasiado el producto.
+
+5. La UX prioriza rapidez para el uso cotidiano.
 
 Por eso:
 - tap = completar
 - swipe = editar/eliminar
 - arrastre = reordenar
 
-4. La linea visual actual debe mantenerse.
+6. La linea visual actual debe mantenerse.
 
 No se planea abrir variaciones de tema por ahora. Eso puede hablarse mucho mas adelante.
 
@@ -139,24 +185,20 @@ Lo mas importante que sigue pendiente, en terminos practicos, es esto:
 
 ### Prioridad alta
 
-- revisar y reforzar la validacion de horas
-- agregar tests basicos de modelos, persistencia y widgets clave
-- evaluar si el progreso debe contar todos los bloques o solo algunos
 - mejorar el modelo de tiempo para que no dependa siempre de `String`
+- seguir estabilizando las notificaciones reales en Android y dispositivo
+- pulir mas la experiencia de eventos puntuales por fecha
+- reforzar tests en flujos mas completos de calendario, eventos y cambio de rutina
 
 ### Prioridad media
 
-- eliminar rutinas
-- crear una pantalla o flujo mas comodo para administrar rutinas
-- mejorar el estado vacio y mensajes de ayuda
 - mejorar la estructura interna del proyecto para que escale mejor
+- refinar mas la experiencia del calendario
+- mejorar la administracion de rutinas por periodo
+- decidir si en el futuro se soportaran varias rutinas en un mismo dia
 
 ### Prioridad futura
 
-- historial por fecha
-- streaks o rachas
-- estadisticas
-- configuracion por bloque para recibir o no notificaciones push
 - gamificacion
 - importacion/exportacion con Excel
 - sincronizacion en la nube
@@ -167,13 +209,11 @@ Lo mas importante que sigue pendiente, en terminos practicos, es esto:
 
 Si otra persona o un futuro hilo retoma el proyecto, el orden recomendado es:
 
-1. fortalecer validacion de horas
-2. agregar tests basicos
-3. decidir si todos los bloques cuentan igual para progreso
-4. permitir eliminar rutinas de forma segura
-5. mejorar el modelo de tiempo
-6. empezar historial diario y streaks
-7. agregar propiedad por bloque para definir si recibe notificacion push
+1. estabilizar notificaciones reales en Android y validar mejor permisos, reagendado y prueba en dispositivo
+2. seguir enriqueciendo eventos puntuales por fecha
+3. mejorar el modelo de tiempo para no depender tanto de `String`
+4. reforzar tests sobre calendario, eventos y notificaciones
+5. mejorar la estructura interna del proyecto para que `TodayPage` no concentre tanta logica
 
 ## 8. Estado del roadmap
 
@@ -262,24 +302,72 @@ Decision de producto:
 - la vigencia sirve principalmente como aviso o sugerencia, no como bloqueo duro
 - si la rutina no esta vigente hoy, la pantalla lo comunica, pero el usuario aun puede decidir usarla
 
+### Rutina sugerida y administracion
+
+La app ya puede sugerir automaticamente la mejor rutina para hoy cuando hay varias opciones vigentes.
+Tambien existe una vista de administracion que agrupa rutinas por periodo y estado temporal para que sea mas facil mantenerlas.
+
+### Calendario y bloques puntuales
+
+El calendario mensual ya no es solo una lista de registros. Ahora permite:
+
+- navegar por meses
+- ver dias con actividad real
+- ver dias futuros planificados
+- abrir el detalle de una fecha
+- agregar, editar y eliminar eventos puntuales por fecha
+
+Los eventos puntuales se tratan como algo separado de la rutina base, para no contaminar el historial ni la plantilla.
+
+### Notificaciones del dispositivo
+
+Ya existe una base real para notificaciones locales:
+
+- propiedad `receivesPushNotification` por bloque
+- servicio de notificaciones
+- reagendado desde la UI
+- prueba manual de notificacion
+- diagnostico de permisos y cantidad de recordatorios programados
+
+Todavia conviene seguir probandolo en Android real para asegurar que el comportamiento sea consistente.
+
+### Idea futura anotada
+
+Se deja registrada una idea de evolucion posible:
+
+- permitir varias rutinas en un mismo dia
+
+Ejemplo de uso:
+
+- una rutina de manana
+- otra de tarde
+- desactivar o reemplazar solo una parte del dia
+
+Por ahora esto no forma parte del comportamiento base. Se mantiene como exploracion futura porque implicaria revisar con cuidado el modelo del dia, el calendario y la logica de sugerencias.
+
 ### Siguiente conversacion recomendada
 
 Si otro hilo retoma el proyecto despues de este punto, el siguiente paso natural puede ser uno de estos:
 
-1. avisos cuando una rutina esta por vencer o empezar
-2. seleccion automatica de la rutina que aplica hoy cuando existan varias vigentes
-3. notificaciones push por bloque usando una propiedad tipo `receivesPushNotification`
+1. estabilizar y validar notificaciones reales en Android
+2. seguir mejorando los eventos puntuales por fecha
+3. mejorar el modelo de tiempo
+4. reforzar tests de flujos completos
 
 ## 13. Cambios recientes pendientes de validar
 
-En la sesion actual se agrego una base nueva para tres cosas:
+En la sesion actual se reforzo especialmente:
 
-- avisos de vigencia de rutina dentro de la pantalla principal
-- propiedad por bloque `receivesPushNotification`
-- soporte mas completo para bloques puntuales por fecha, incluyendo tipo `event`
+- diagnostico y prueba manual de notificaciones locales
+- reagendado de recordatorios desde la UI
+- flujo rapido para agregar:
+  - bloque de rutina
+  - evento puntual
+- mejor separacion visual entre rutina base y eventos puntuales en el detalle de fecha
 
 La intencion de producto en este punto es:
 
 - la vigencia debe avisar, no bloquear
 - cada bloque decide si quiere push o no
 - los eventos puntuales de calendario no deben reescribir la rutina base
+- una sola rutina activa sigue siendo el comportamiento base, aunque existe la idea futura de permitir varias en un mismo dia

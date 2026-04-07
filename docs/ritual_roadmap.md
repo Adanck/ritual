@@ -336,14 +336,11 @@ Commit sugerido:
 
 El siguiente orden es el que recomiendo para no abrir demasiados frentes a la vez:
 
-1. RIT-006 Implementar selector de rutinas
-2. RIT-007 Crear rutina nueva
-3. RIT-011 Crear bloque nuevo
-4. RIT-012 Editar bloque existente
-5. RIT-015 Validar horarios
-6. RIT-020 Agregar estado vacio
-7. RIT-005 Agregar tests basicos
-8. RIT-026A Configurar notificaciones por bloque
+1. fortalecer las notificaciones reales en dispositivo
+2. seguir mejorando los eventos puntuales por fecha
+3. mejorar el modelo de tiempo
+4. reforzar tests sobre calendario, eventos y notificaciones
+5. seguir ordenando la arquitectura para que `TodayPage` no concentre tanto estado
 
 ## Convencion sugerida para estados
 
@@ -369,18 +366,41 @@ Puedes usar estos valores dentro del Excel:
 Ya quedaron implementadas estas capacidades del roadmap:
 
 - selector, creacion, edicion y eliminacion segura de rutinas
+- duplicado de rutinas
 - creacion, edicion, eliminacion y reordenamiento de bloques
 - validacion de horarios y tests basicos
+- alcance de cambios por bloque: `solo hoy` o `toda la rutina`
+- propiedad `countsTowardProgress`
 - historial diario con reset automatico
 - rachas y estadisticas basicas
 - vista de dias anteriores y detalle de un dia historico
 - vigencia de rutinas con modos `siempre`, `semana actual`, `mes actual` y `rango personalizado`
 - avisos de vigencia para rutinas que estan por empezar o terminar
+- sugerencia automatica de la rutina que mejor aplica hoy
+- administracion de rutinas por periodo y estado temporal
+- calendario mensual con insights por fecha y navegacion por meses
 - preferencia por bloque para recibir notificaciones push
 - bloques puntuales por fecha con soporte para eventos y recordatorios
+- edicion y eliminacion de eventos puntuales desde el detalle de fecha
+- base de notificaciones locales con diagnostico, reagendado y prueba manual
 
 Siguiente bloque recomendado:
 
-1. seleccion automatica de la rutina que aplica hoy cuando haya varias vigentes
-2. conectar la preferencia de push con notificaciones reales
-3. enriquecer aun mas los eventos puntuales de calendario
+1. seguir validando notificaciones reales en Android y cerrar los casos borde
+2. enriquecer aun mas los eventos puntuales de calendario
+3. mejorar el modelo de tiempo
+4. reforzar tests de flujos completos
+
+## Idea futura anotada
+
+Queda registrada una exploracion de producto para mas adelante:
+
+- permitir varias rutinas en un mismo dia
+
+Posible caso de uso:
+
+- una rutina de manana
+- otra de tarde
+- activar o reemplazar solo una parte del dia
+
+Por ahora no forma parte del comportamiento base. La app sigue trabajando con una rutina activa principal y eventos puntuales separados, porque eso mantiene el modelo mas claro mientras el producto madura.
