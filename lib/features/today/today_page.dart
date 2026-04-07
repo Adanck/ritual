@@ -2,6 +2,7 @@
 import 'package:ritual/core/models/notification_diagnostics.dart';
 import 'package:ritual/core/services/notification_service.dart';
 import 'package:ritual/core/services/today_notification_coordinator.dart';
+import 'package:ritual/core/utils/dated_block_entry_collection_utils.dart';
 import 'package:ritual/core/utils/day_block_collection_utils.dart';
 import 'package:ritual/core/utils/date_key.dart';
 import 'package:ritual/core/utils/day_block_time_validator.dart';
@@ -15,6 +16,8 @@ import 'package:ritual/data/models/daily_record.dart';
 import 'package:ritual/data/models/day_block.dart';
 import 'package:ritual/data/models/routine.dart';
 import 'package:ritual/data/models/routine_schedule.dart';
+import 'package:ritual/data/services/app_backup_service.dart';
+import 'package:ritual/data/services/routine_csv_service.dart';
 import 'package:ritual/data/services/storage_service.dart';
 import 'package:ritual/features/settings/settings_page.dart';
 import 'package:ritual/features/stats/stats_page.dart';
@@ -83,6 +86,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   NotificationDiagnostics notificationDiagnostics =
       const NotificationDiagnostics.unsupported();
   bool isNotificationActionInProgress = false;
+  int importEntityIdSeed = 0;
 
   static const List<DropdownMenuItem<BlockType>> _blockTypeOptions = [
     DropdownMenuItem(
@@ -2316,26 +2320,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       isDone: false,
     );
 
-    final updatedEntries = [
-      ...getDatedBlocksForDate(normalizedDateKey),
-      DatedBlockEntry(
+    setState(() {
+      datedBlocks = DatedBlockEntryCollectionUtils.addEntry(
+        source: datedBlocks,
         dateKey: normalizedDateKey,
         block: datedBlock,
-      ),
-    ];
-    final sortedEntries = DayBlockCollectionUtils.sortChronologically(
-      updatedEntries.map((entry) => entry.block).toList(),
-    );
-
-    setState(() {
-      datedBlocks.removeWhere((entry) => entry.dateKey == normalizedDateKey);
-      datedBlocks.addAll(
-        sortedEntries.map(
-          (block) => DatedBlockEntry(
-            dateKey: normalizedDateKey,
-            block: block,
-          ),
-        ),
       );
     });
 
@@ -2371,23 +2360,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
     if (!shouldSave) return;
 
-    final updatedEntries = getDatedBlocksForDate(entry.dateKey)
-        .map((datedEntry) =>
-            datedEntry.block.id == entry.block.id ? updatedBlock : datedEntry.block)
-        .toList();
-    final sortedBlocks = DayBlockCollectionUtils.sortChronologically(
-      updatedEntries,
-    );
-
     setState(() {
-      datedBlocks.removeWhere((datedEntry) => datedEntry.dateKey == entry.dateKey);
-      datedBlocks.addAll(
-        sortedBlocks.map(
-          (block) => DatedBlockEntry(
-            dateKey: entry.dateKey,
-            block: block,
-          ),
-        ),
+      datedBlocks = DatedBlockEntryCollectionUtils.updateEntry(
+        source: datedBlocks,
+        originalEntry: entry,
+        updatedBlock: updatedBlock,
       );
     });
 
@@ -2430,30 +2407,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       isDone: targetDateKey == entry.dateKey ? entry.block.isDone : false,
     );
 
-    final targetBlocks = [
-      ...getDatedBlocksForDate(targetDateKey).map((datedEntry) => datedEntry.block),
-      if (targetDateKey != entry.dateKey) movedBlock,
-    ];
-
-    final sortedTargetBlocks = DayBlockCollectionUtils.sortChronologically(
-      targetDateKey == entry.dateKey
-          ? getDatedBlocksForDate(targetDateKey)
-              .map((datedEntry) =>
-                  datedEntry.block.id == entry.block.id ? movedBlock : datedEntry.block)
-              .toList()
-          : targetBlocks,
-    );
-
     setState(() {
-      datedBlocks.remove(entry);
-      datedBlocks.removeWhere((datedEntry) => datedEntry.dateKey == targetDateKey);
-      datedBlocks.addAll(
-        sortedTargetBlocks.map(
-          (block) => DatedBlockEntry(
-            dateKey: targetDateKey,
-            block: block,
-          ),
-        ),
+      datedBlocks = DatedBlockEntryCollectionUtils.moveEntry(
+        source: datedBlocks,
+        entry: entry,
+        targetDateKey: targetDateKey,
       );
     });
 
@@ -2495,26 +2453,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
     if (!shouldSave) return;
 
-    final updatedEntries = [
-      ...getDatedBlocksForDate(targetDateKey),
-      DatedBlockEntry(
-        dateKey: targetDateKey,
-        block: duplicatedBlock,
-      ),
-    ];
-    final sortedBlocks = DayBlockCollectionUtils.sortChronologically(
-      updatedEntries.map((datedEntry) => datedEntry.block).toList(),
-    );
-
     setState(() {
-      datedBlocks.removeWhere((datedEntry) => datedEntry.dateKey == targetDateKey);
-      datedBlocks.addAll(
-        sortedBlocks.map(
-          (block) => DatedBlockEntry(
-            dateKey: targetDateKey,
-            block: block,
-          ),
-        ),
+      datedBlocks = DatedBlockEntryCollectionUtils.duplicateEntry(
+        source: datedBlocks,
+        targetDateKey: targetDateKey,
+        duplicatedBlock: duplicatedBlock,
       );
     });
 
@@ -2560,7 +2503,10 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (shouldDelete != true) return;
 
     setState(() {
-      datedBlocks.remove(entry);
+      datedBlocks = DatedBlockEntryCollectionUtils.removeEntry(
+        source: datedBlocks,
+        entry: entry,
+      );
     });
 
     await saveDatedBlocksAndRefresh();
@@ -4103,7 +4049,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   Future<void> openSettingsPage() async {
     final updatedSettings = await Navigator.of(context).push<AppSettings>(
       MaterialPageRoute(
-        builder: (_) => SettingsPage(initialSettings: appSettings),
+        builder: (_) => SettingsPage(
+          initialSettings: appSettings,
+          onBuildRoutineCsvExport: buildRoutineCsvExport,
+          onImportRoutineCsv: importRoutineCsv,
+          onBuildAppBackupExport: buildAppBackupExport,
+          onImportAppBackup: importAppBackup,
+        ),
       ),
     );
 
@@ -4117,6 +4069,155 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     setState(() {});
 
     showFeedbackMessage('Ajustes guardados.');
+  }
+
+  /// Prepara la biblioteca actual en CSV para abrirla o copiarla desde Ajustes.
+  Future<RoutineCsvExportData> buildRoutineCsvExport() async {
+    return RoutineCsvService.exportRoutines(routines);
+  }
+
+  /// Importa una biblioteca desde CSV y la integra segun el modo elegido.
+  ///
+  /// Regla: regeneramos ids al importar para no cruzar historial viejo con una
+  /// biblioteca nueva o restaurada. Caso borde: si el CSV no trae rutinas,
+  /// detenemos la importacion para no dejar la app sin biblioteca usable.
+  Future<RoutineCsvImportData> importRoutineCsv(
+    String csv,
+    RoutineCsvImportMode mode,
+  ) async {
+    final importedData = RoutineCsvService.importRoutines(csv);
+    if (importedData.routines.isEmpty) {
+      throw const FormatException(
+        'El CSV no contiene rutinas importables.',
+      );
+    }
+
+    final hasActiveRoutine = routines.any((routine) => routine.isActive);
+    final importedLibrary = cloneImportedRoutineLibrary(
+      importedData.routines,
+      preserveActive: mode == RoutineCsvImportMode.replace || !hasActiveRoutine,
+    );
+
+    final nextLibrary = switch (mode) {
+      RoutineCsvImportMode.merge => normalizeRoutineLibraryActiveState(
+          [...routines, ...importedLibrary],
+        ),
+      RoutineCsvImportMode.replace =>
+        normalizeRoutineLibraryActiveState(importedLibrary),
+    };
+
+    final nextActiveRoutine = nextLibrary.cast<Routine?>().firstWhere(
+          (routine) => routine?.isActive ?? false,
+          orElse: () => nextLibrary.isEmpty ? null : nextLibrary.first,
+        );
+
+    setState(() {
+      routines = nextLibrary;
+      activeRoutine = nextActiveRoutine;
+    });
+
+    await StorageService.saveRoutines(nextLibrary);
+    await syncNotificationsWithStoredState();
+
+    return importedData;
+  }
+
+  /// Construye un backup completo del estado local de Ritual.
+  Future<AppBackupExportData> buildAppBackupExport() async {
+    return AppBackupService.export(
+      routines: routines,
+      dailyRecords: dailyRecords,
+      datedBlocks: datedBlocks,
+      appSettings: appSettings,
+    );
+  }
+
+  /// Restaura un backup completo y resincroniza el estado derivado.
+  ///
+  /// Regla: este flujo reemplaza el estado local para preservar integridad
+  /// entre biblioteca, historial y eventos puntuales. Caso borde: si el backup
+  /// no trae rutina activa pero si trae rutinas, promovemos la primera.
+  Future<AppBackupImportData> importAppBackup(String json) async {
+    final importedData = AppBackupService.import(json);
+    final nextRoutines =
+        normalizeRoutineLibraryActiveState([...importedData.routines]);
+    final nextActiveRoutine = nextRoutines.cast<Routine?>().firstWhere(
+          (routine) => routine?.isActive ?? false,
+          orElse: () => nextRoutines.isEmpty ? null : nextRoutines.first,
+        );
+
+    setState(() {
+      routines = nextRoutines;
+      dailyRecords = importedData.dailyRecords;
+      datedBlocks = importedData.datedBlocks;
+      appSettings = importedData.appSettings;
+      activeRoutine = nextActiveRoutine;
+    });
+
+    await StorageService.saveRoutines(routines);
+    await StorageService.saveDailyRecords(dailyRecords);
+    await StorageService.saveDatedBlocks(datedBlocks);
+    await StorageService.saveAppSettings(appSettings);
+    await syncNotificationsWithStoredState();
+
+    return AppBackupImportData(
+      routines: routines,
+      dailyRecords: dailyRecords,
+      datedBlocks: datedBlocks,
+      appSettings: appSettings,
+    );
+  }
+
+  /// Clona la biblioteca importada asignando ids frescos.
+  ///
+  /// Caso borde: en modo `merge` las rutinas importadas no deben robar el foco
+  /// de la rutina activa actual si ya existe una seleccion valida en memoria.
+  List<Routine> cloneImportedRoutineLibrary(
+    List<Routine> importedRoutines, {
+    required bool preserveActive,
+  }) {
+    return importedRoutines.map((routine) {
+      final clonedBlocks = routine.blocks.map((block) {
+        return block.copyWith(
+          id: buildImportedEntityId('block'),
+          isDone: false,
+        );
+      }).toList();
+
+      return Routine(
+        id: buildImportedEntityId('routine'),
+        name: routine.name,
+        blocks: clonedBlocks,
+        isActive: preserveActive ? routine.isActive : false,
+        schedule: routine.schedule,
+      );
+    }).toList();
+  }
+
+  /// Garantiza que la biblioteca resultante tenga una unica rutina activa.
+  ///
+  /// Regla: si nadie llega activa, promovemos la primera. Si llegan varias,
+  /// conservamos solo la primera para no dejar el dia en un estado ambiguo.
+  List<Routine> normalizeRoutineLibraryActiveState(List<Routine> source) {
+    if (source.isEmpty) return source;
+
+    final activeRoutine = source.cast<Routine?>().firstWhere(
+          (routine) => routine?.isActive ?? false,
+          orElse: () => source.first,
+        );
+    final activeRoutineId = activeRoutine?.id;
+
+    for (final routine in source) {
+      routine.isActive = routine.id == activeRoutineId;
+    }
+
+    return source;
+  }
+
+  String buildImportedEntityId(String prefix) {
+    importEntityIdSeed += 1;
+    final timestamp = DateTime.now().microsecondsSinceEpoch;
+    return '$prefix-import-$timestamp-$importEntityIdSeed';
   }
 
   /// Abre la pantalla dedicada de estadisticas usando el estado ya cargado en
@@ -4142,21 +4243,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// evitar recordatorios de algo que ya se resolvio.
   Future<void> toggleDatedBlockEntryCompletion(DatedBlockEntry entry) async {
     final updatedBlock = entry.block.copyWith(isDone: !entry.block.isDone);
-    final updatedBlocks = getDatedBlocksForDate(entry.dateKey)
-        .map((datedEntry) =>
-            datedEntry.block.id == entry.block.id ? updatedBlock : datedEntry.block)
-        .toList();
-    final sortedBlocks = DayBlockCollectionUtils.sortChronologically(updatedBlocks);
 
     setState(() {
-      datedBlocks.removeWhere((datedEntry) => datedEntry.dateKey == entry.dateKey);
-      datedBlocks.addAll(
-        sortedBlocks.map(
-          (block) => DatedBlockEntry(
-            dateKey: entry.dateKey,
-            block: block,
-          ),
-        ),
+      datedBlocks = DatedBlockEntryCollectionUtils.toggleCompletion(
+        source: datedBlocks,
+        entry: entry,
       );
     });
 
@@ -4267,6 +4358,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       dateLabelBuilder: buildDatedEntryDateLabel,
       entries: entries,
       scheduledNotificationSourceKeys: scheduledNotificationSourceKeys,
+      onToggleCompletion: toggleDatedBlockEntryCompletion,
       actionsBuilder: (entry) => buildDatedEntryActionsMenu(
         entry: entry,
         onOpenDateDetails: () => showCalendarDateDetails(DateKey.toDate(entry.dateKey)),

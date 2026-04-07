@@ -13,15 +13,15 @@ Este documento convierte la vision del producto en una secuencia concreta de tra
 
 Estado estimado actual del proyecto:
 
-`70%`
+`90%`
 
 Barra de avance:
 
-`[--------------] 70% completado`
+`[------------------] 90% completado`
 
 Falta aproximada:
 
-`30%`
+`10%`
 
 Regla de actualizacion:
 
@@ -321,17 +321,49 @@ Commit sugerido:
 
 ### RIT-028 Exportar a Excel
 
-Importante por el origen del producto.
+Ya existe una primera version funcional via CSV compatible con Excel desde Ajustes.
+
+Lo que ya hace:
+- exporta la biblioteca de rutinas
+- se puede abrir y editar en Excel
+- sirve para mover rutinas entre instalaciones
+
+Lo que todavia falta si se quiere cerrar esta tarea al 100%:
+- exportacion directa como archivo Excel real
+- selector/guardado de archivo mas comodo
+- decision de si tambien debe incluir historial u otros datos
 
 Commit sugerido:
 `feat: export routines to excel`
 
 ### RIT-029 Importar desde Excel
 
-Permite migrar desde el sistema actual sin reescribir todo a mano.
+Ya existe una primera version funcional via CSV compatible con Excel desde Ajustes.
+
+Lo que ya hace:
+- permite pegar CSV exportado por Ritual
+- permite pegar una version editada en Excel con las mismas columnas
+- soporta agregar o reemplazar la biblioteca
+
+Lo que todavia falta si se quiere cerrar esta tarea al 100%:
+- importacion directa desde archivo Excel real
+- flujo con selector de archivo
+- validaciones y UX extra para migraciones grandes
 
 Commit sugerido:
 `feat: import routines from excel`
+
+### RIT-029A Backup completo de la app
+
+Ya esta completado en una primera version funcional.
+
+Actualmente permite:
+- exportar un JSON versionado
+- importar el mismo backup
+- restaurar rutinas, historial, eventos puntuales y ajustes
+
+Commit sugerido:
+`feat: add full app backup and restore flow`
 
 ### RIT-030 Sincronizacion en la nube
 
@@ -421,8 +453,8 @@ Siguiente bloque recomendado:
 
 1. seguir validando notificaciones reales en Android y cerrar los casos borde
 2. enriquecer aun mas los eventos puntuales de calendario
-3. seguir puliendo gestion de rutinas por periodo y agenda real
-4. reforzar tests de flujos completos
+3. reforzar tests de flujos completos
+4. seguir puliendo gestion de rutinas por periodo y agenda real
 
 ## Idea futura anotada
 

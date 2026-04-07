@@ -8,17 +8,17 @@ Se recomienda mantener este documento actualizado cada vez que cierres una sesio
 
 Progreso estimado actual del producto:
 
-`70%`
+`90%`
 
 Barra de avance:
 
-`[--------------] 70% completado`
+`[------------------] 90% completado`
 
 Lectura practica:
 
 - base y MVP serio: ya estan bastante solidos
 - producto pulido y mas completo: todavia queda trabajo relevante
-- falta aproximada: `30%`
+- falta aproximada: `10%`
 
 Como actualizar este porcentaje:
 
@@ -169,6 +169,16 @@ Al momento de escribir este archivo, esto ya existe y funciona:
 - reagendado de recordatorios desde la UI
 - soporte web limitado: conserva la preferencia, pero no agenda notificaciones locales
 
+### Respaldo y continuidad
+
+- exportacion de biblioteca de rutinas en CSV compatible con Excel
+- importacion de biblioteca de rutinas pegando CSV desde Excel
+- backup completo en JSON versionado con:
+  - rutinas
+  - historial diario
+  - eventos puntuales
+  - ajustes
+
 ## 5. Decisiones de producto ya tomadas
 
 Estas decisiones ya se conversaron y conviene mantenerlas consistentes:
@@ -213,6 +223,7 @@ Lo mas importante que sigue pendiente, en terminos practicos, es esto:
 - seguir fortaleciendo la gestion de rutinas por periodo
 - seguir enriqueciendo estadisticas y lectura historica del sistema
 - reforzar tests en flujos mas completos de calendario, eventos y cambio de rutina
+- llevar el respaldo actual a una experiencia mas directa con archivos si hace falta
 
 ### Prioridad media
 
@@ -224,7 +235,7 @@ Lo mas importante que sigue pendiente, en terminos practicos, es esto:
 ### Prioridad futura
 
 - gamificacion
-- importacion/exportacion con Excel
+- importacion/exportacion directa con archivos Excel reales
 - sincronizacion en la nube
 - autenticacion
 - mejor soporte web y escritorio
@@ -235,9 +246,9 @@ Si otra persona o un futuro hilo retoma el proyecto, el orden recomendado es:
 
 1. estabilizar notificaciones reales en Android y validar mejor permisos, reagendado y prueba en dispositivo
 2. seguir enriqueciendo eventos puntuales por fecha
-3. seguir reforzando estadisticas y gestion de rutinas por periodo
-4. reforzar tests sobre calendario, eventos y notificaciones
-5. mejorar la estructura interna del proyecto para que `TodayPage` no concentre tanta logica
+3. reforzar tests de flujos completos en agenda, backup y notificaciones
+4. mejorar la estructura interna del proyecto para que `TodayPage` no concentre tanta logica
+5. decidir si el siguiente salto de continuidad sera archivo Excel real o sincronizacion
 
 ## 8. Estado del roadmap
 
@@ -394,8 +405,8 @@ Si otro hilo retoma el proyecto despues de este punto, el siguiente paso natural
 
 1. estabilizar y validar notificaciones reales en Android
 2. seguir mejorando los eventos puntuales por fecha
-3. mejorar el modelo de tiempo
-4. reforzar tests de flujos completos
+3. reforzar tests de flujos completos
+4. llevar el respaldo a una experiencia de archivo mas directa si hace falta
 
 ## 13. Cambios recientes pendientes de validar
 
@@ -407,6 +418,8 @@ En la sesion actual se reforzo especialmente:
   - bloque de rutina
   - evento puntual
 - mejor separacion visual entre rutina base y eventos puntuales en el detalle de fecha
+- exportacion/importacion de biblioteca en CSV compatible con Excel
+- backup completo de la app en JSON versionado
 
 La intencion de producto en este punto es:
 

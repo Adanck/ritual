@@ -148,6 +148,7 @@ class TodayUpcomingDatedEventsCard extends StatelessWidget {
   final String Function(DatedBlockEntry entry) dateLabelBuilder;
   final List<DatedBlockEntry> entries;
   final Set<String> scheduledNotificationSourceKeys;
+  final Future<void> Function(DatedBlockEntry entry)? onToggleCompletion;
   final Widget Function(DatedBlockEntry entry) actionsBuilder;
   final VoidCallback onOpenCalendar;
 
@@ -157,6 +158,7 @@ class TodayUpcomingDatedEventsCard extends StatelessWidget {
     required this.dateLabelBuilder,
     required this.entries,
     required this.scheduledNotificationSourceKeys,
+    required this.onToggleCompletion,
     required this.actionsBuilder,
     required this.onOpenCalendar,
   });
@@ -298,7 +300,26 @@ class TodayUpcomingDatedEventsCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  actionsBuilder(entry),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (onToggleCompletion != null)
+                        IconButton(
+                          tooltip: entry.block.isDone
+                              ? 'Marcar pendiente'
+                              : 'Marcar hecho',
+                          onPressed: () async {
+                            await onToggleCompletion!(entry);
+                          },
+                          icon: Icon(
+                            entry.block.isDone
+                                ? Icons.undo_rounded
+                                : Icons.check_circle_outline_rounded,
+                          ),
+                        ),
+                      actionsBuilder(entry),
+                    ],
+                  ),
                 ],
               ),
             );
