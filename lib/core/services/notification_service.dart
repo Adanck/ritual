@@ -25,6 +25,9 @@ class NotificationService {
   static bool _initialized = false;
   static bool _timeZoneInitialized = false;
 
+  /// Indica si la plataforma actual soporta esta estrategia de notificaciones.
+  static bool get supportsLocalNotifications => !kIsWeb;
+
   /// Inicializa el plugin y la zona horaria local.
   static Future<void> initialize() async {
     if (kIsWeb || _initialized) return;
@@ -92,6 +95,60 @@ class NotificationService {
         );
   }
 
+  /// Consulta si las notificaciones estan habilitadas cuando la plataforma lo
+  /// expone de forma nativa.
+  ///
+  /// Caso borde: algunas plataformas de escritorio no ofrecen esta consulta en
+  /// el plugin, asi que devolvemos `null` para que la UI muestre un estado
+  /// neutro en lugar de asumir que estan desactivadas.
+  static Future<bool?> areNotificationsEnabled() async {
+    if (kIsWeb) return false;
+    await initialize();
+
+    try {
+      final androidEnabled = await _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.areNotificationsEnabled();
+      if (androidEnabled != null) return androidEnabled;
+    } catch (_) {}
+
+    return null;
+  }
+
+  /// Devuelve cuantas notificaciones futuras quedaron programadas.
+  static Future<int> getPendingNotificationsCount() async {
+    if (kIsWeb) return 0;
+    await initialize();
+
+    try {
+      final pendingRequests = await _plugin.pendingNotificationRequests();
+      return pendingRequests.length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// Lanza una notificacion inmediata para validar permisos y canal.
+  ///
+  /// Regla: se usa como herramienta de diagnostico manual desde la app para
+  /// verificar rapidamente si el dispositivo puede mostrar recordatorios.
+  static Future<void> showTestNotificationNow() async {
+    if (kIsWeb) return;
+
+    await initialize();
+    await requestPermissionsIfNeeded();
+
+    await _plugin.show(
+      DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      'Ritual esta listo',
+      'Si ves este aviso, las notificaciones locales estan funcionando.',
+      _buildNotificationDetails(),
+      payload: 'ritual:test-notification',
+    );
+  }
+
   /// Reagenda las notificaciones futuras a partir del estado actual.
   ///
   /// Regla: se recalcula todo para que la agenda quede alineada con cambios de
@@ -124,27 +181,13 @@ class NotificationService {
 
     await requestPermissionsIfNeeded();
 
-    const details = NotificationDetails(
-      android: AndroidNotificationDetails(
-        _channelId,
-        _channelName,
-        channelDescription: _channelDescription,
-        importance: Importance.high,
-        priority: Priority.high,
-      ),
-      iOS: DarwinNotificationDetails(),
-      macOS: DarwinNotificationDetails(),
-      linux: LinuxNotificationDetails(),
-      windows: WindowsNotificationDetails(),
-    );
-
     for (final entry in pendingEntries) {
       await _plugin.zonedSchedule(
         entry.id,
         entry.title,
         entry.body,
         tz.TZDateTime.from(entry.when, tz.local),
-        details,
+        _buildNotificationDetails(),
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         payload: entry.payload,
       );
@@ -282,6 +325,24 @@ class NotificationService {
     }
 
     _timeZoneInitialized = true;
+  }
+
+  /// Centraliza los detalles visuales para no duplicar configuracion al agendar
+  /// recordatorios o disparar una notificacion de prueba.
+  static NotificationDetails _buildNotificationDetails() {
+    return const NotificationDetails(
+      android: AndroidNotificationDetails(
+        _channelId,
+        _channelName,
+        channelDescription: _channelDescription,
+        importance: Importance.high,
+        priority: Priority.high,
+      ),
+      iOS: DarwinNotificationDetails(),
+      macOS: DarwinNotificationDetails(),
+      linux: LinuxNotificationDetails(),
+      windows: WindowsNotificationDetails(),
+    );
   }
 }
 

@@ -85,6 +85,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   List<DailyRecord> dailyRecords = [];
   List<DatedBlockEntry> datedBlocks = [];
   Routine? activeRoutine;
+  bool? notificationsEnabled;
+  int scheduledNotificationsCount = 0;
+  bool isNotificationActionInProgress = false;
 
   static const List<DropdownMenuItem<BlockType>> _blockTypeOptions = [
     DropdownMenuItem(
@@ -759,6 +762,124 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       activeRoutineId: activeRoutine?.id,
       anchorDate: todayDate,
     );
+    await refreshNotificationDiagnostics();
+  }
+
+  /// Lee el estado actual de permisos y cantidad de recordatorios agendados.
+  ///
+  /// Regla: este diagnostico no bloquea la app. Si la plataforma no expone
+  /// permisos detallados, dejamos `notificationsEnabled` en `null` y solo
+  /// mostramos la cantidad programada.
+  Future<void> refreshNotificationDiagnostics() async {
+    if (!NotificationService.supportsLocalNotifications) {
+      if (!mounted) return;
+
+      setState(() {
+        notificationsEnabled = false;
+        scheduledNotificationsCount = 0;
+      });
+      return;
+    }
+
+    final enabled = await NotificationService.areNotificationsEnabled();
+    final pendingCount = await NotificationService.getPendingNotificationsCount();
+
+    if (!mounted) return;
+    setState(() {
+      notificationsEnabled = enabled;
+      scheduledNotificationsCount = pendingCount;
+    });
+  }
+
+  /// Solicita permisos de notificacion desde la UI y refresca el diagnostico.
+  Future<void> requestNotificationPermissionsFromUi() async {
+    if (!NotificationService.supportsLocalNotifications) return;
+
+    setState(() {
+      isNotificationActionInProgress = true;
+    });
+
+    await NotificationService.requestPermissionsIfNeeded();
+    await syncNotificationsWithStoredState();
+
+    if (!mounted) return;
+    setState(() {
+      isNotificationActionInProgress = false;
+    });
+
+    final enabled = notificationsEnabled;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          enabled == false
+              ? 'Ritual no pudo confirmar el permiso de notificaciones. Revisa la configuracion del dispositivo.'
+              : 'Permisos de notificacion revisados.',
+        ),
+      ),
+    );
+  }
+
+  /// Recalcula manualmente todos los recordatorios futuros.
+  Future<void> resyncNotificationsFromUi() async {
+    if (!NotificationService.supportsLocalNotifications) return;
+
+    setState(() {
+      isNotificationActionInProgress = true;
+    });
+
+    await syncNotificationsWithStoredState();
+
+    if (!mounted) return;
+    setState(() {
+      isNotificationActionInProgress = false;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          scheduledNotificationsCount == 0
+              ? 'No hay recordatorios futuros por programar.'
+              : 'Ritual reagendo $scheduledNotificationsCount recordatorios.',
+        ),
+      ),
+    );
+  }
+
+  /// Dispara una notificacion inmediata para probar el canal del dispositivo.
+  Future<void> sendTestNotificationFromUi() async {
+    if (!NotificationService.supportsLocalNotifications) return;
+
+    setState(() {
+      isNotificationActionInProgress = true;
+    });
+
+    await NotificationService.showTestNotificationNow();
+    await refreshNotificationDiagnostics();
+
+    if (!mounted) return;
+    setState(() {
+      isNotificationActionInProgress = false;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Ritual envio una notificacion de prueba. Revisa el panel del dispositivo.',
+        ),
+      ),
+    );
+  }
+
+  /// Cuando un bloque activa push, intentamos dejar listo el permiso y la
+  /// agenda para que la experiencia sea mas confiable desde el primer uso.
+  Future<void> prepareNotificationsForBlockIfNeeded(DayBlock block) async {
+    if (!block.receivesPushNotification ||
+        !NotificationService.supportsLocalNotifications) {
+      return;
+    }
+
+    await NotificationService.requestPermissionsIfNeeded();
+    await syncNotificationsWithStoredState();
   }
 
   /// Marca o desmarca un bloque del registro diario activo y persiste el cambio.
@@ -1217,7 +1338,6 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
               startDateKey: customStartDateKey,
               endDateKey: customEndDateKey,
             );
-
             final previewSchedule = buildRoutineScheduleFromDraft(
               type: scheduleType,
               startDateKey: customStartDateKey ?? todayKey,
@@ -1429,7 +1549,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                 FilledButton(
                   onPressed: () {
                     final isValid = formKey.currentState?.validate() ?? false;
-                    final scheduleValidationMessage = validateRoutineScheduleDraft(
+                    final scheduleValidationMessage =
+                        validateRoutineScheduleDraft(
                       type: scheduleType,
                       startDateKey: customStartDateKey,
                       endDateKey: customEndDateKey,
@@ -1844,7 +1965,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Recibir recordatorio push'),
                         subtitle: const Text(
-                          'Por ahora solo guarda la preferencia. Las notificaciones reales se conectaran en una etapa posterior.',
+                          'Ritual intentara programar una notificacion local para este bloque cuando la plataforma lo permita.',
                         ),
                         onChanged: (value) {
                           setDialogState(() {
@@ -1908,6 +2029,131 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 
+  /// Permite elegir rapidamente si se quiere crear un bloque de rutina o un
+  /// evento puntual con fecha especifica.
+  Future<void> showQuickCreateSheet() async {
+    if (activeRoutine == null) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+
+        Widget buildActionCard({
+          required IconData icon,
+          required Color color,
+          required String title,
+          required String description,
+          required Future<void> Function() onTap,
+        }) {
+          return Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () async {
+                Navigator.of(context).pop();
+                await onTap();
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(icon, color: color),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            description,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Agregar a Ritual',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Elige si quieres cambiar la rutina o crear algo puntual para una fecha concreta.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.white70,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                buildActionCard(
+                  icon: Icons.view_timeline_rounded,
+                  color: const Color(0xFF4DA3FF),
+                  title: 'Bloque de rutina',
+                  description:
+                      'Agrega un bloque a la rutina o solo al plan de hoy segun el alcance que elijas despues.',
+                  onTap: createBlock,
+                ),
+                buildActionCard(
+                  icon: Icons.event_available_rounded,
+                  color: const Color(0xFFFF7A6B),
+                  title: 'Evento puntual',
+                  description:
+                      'Crea una reunion, cita o recordatorio para una fecha especifica sin tocar la rutina base.',
+                  onTap: startQuickDatedBlockFlow,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Flujo rapido para elegir una fecha y crear un evento puntual.
+  Future<void> startQuickDatedBlockFlow() async {
+    final selectedDateKey = await pickDateKey(
+      context: context,
+      initialDateKey: todayKey,
+    );
+    if (selectedDateKey == null) return;
+
+    await createDatedBlockForDate(DateKey.toDate(selectedDateKey));
+  }
+
   /// Crea un nuevo bloque dentro de la rutina activa.
   Future<void> createBlock() async {
     if (activeRoutine == null) return;
@@ -1951,6 +2197,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       });
 
       await saveDailyRecordsAndRefresh();
+      await prepareNotificationsForBlockIfNeeded(createdBlock);
       return;
     }
 
@@ -1973,6 +2220,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     });
 
     await saveRoutinesAndRefresh();
+    await prepareNotificationsForBlockIfNeeded(createdBlock);
   }
 
   /// Crea un bloque puntual asociado a una fecha concreta.
@@ -2026,6 +2274,77 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     });
 
     await saveDatedBlocksAndRefresh();
+    await prepareNotificationsForBlockIfNeeded(datedBlock);
+  }
+
+  /// Edita un evento puntual directamente desde el detalle de una fecha.
+  Future<void> editDatedBlockEntry(DatedBlockEntry entry) async {
+    final updatedBlock = await showBlockForm(existingBlock: entry.block);
+    if (updatedBlock == null) return;
+
+    final entryDate = DateKey.toDate(entry.dateKey);
+    final shouldSave = await confirmOverlapIfNeeded(
+      candidateBlock: updatedBlock,
+      comparisonBlocks: getPlannedBlocksForDate(entryDate),
+      blockBeingEdited: entry.block,
+      scopeLabel:
+          isSameCalendarDay(entryDate, todayDate) ? 'el horario de hoy' : 'esa fecha',
+    );
+    if (!shouldSave) return;
+
+    final updatedEntries = getDatedBlocksForDate(entry.dateKey)
+        .map((datedEntry) =>
+            datedEntry.block.id == entry.block.id ? updatedBlock : datedEntry.block)
+        .toList();
+    final sortedBlocks = sortBlocksChronologically(updatedEntries);
+
+    setState(() {
+      datedBlocks.removeWhere((datedEntry) => datedEntry.dateKey == entry.dateKey);
+      datedBlocks.addAll(
+        sortedBlocks.map(
+          (block) => DatedBlockEntry(
+            dateKey: entry.dateKey,
+            block: block,
+          ),
+        ),
+      );
+    });
+
+    await saveDatedBlocksAndRefresh();
+    await prepareNotificationsForBlockIfNeeded(updatedBlock);
+  }
+
+  /// Elimina un evento puntual sin tocar la rutina base ni el resto del dia.
+  Future<void> deleteDatedBlockEntry(DatedBlockEntry entry) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Eliminar evento puntual'),
+          content: Text(
+            'Se eliminara "${entry.block.title}" de ${DateKey.formatForDisplay(entry.dateKey)}.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Eliminar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldDelete != true) return;
+
+    setState(() {
+      datedBlocks.remove(entry);
+    });
+
+    await saveDatedBlocksAndRefresh();
   }
 
   /// Edita un bloque existente reemplazandolo por una nueva version.
@@ -2076,6 +2395,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       });
 
       await saveDatedBlocksAndRefresh();
+      await prepareNotificationsForBlockIfNeeded(updatedBlock);
       return;
     }
 
@@ -2121,6 +2441,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       });
 
       await saveDailyRecordsAndRefresh();
+      await prepareNotificationsForBlockIfNeeded(updatedBlock);
       return;
     }
 
@@ -2145,6 +2466,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     });
 
     await saveRoutinesAndRefresh();
+    await prepareNotificationsForBlockIfNeeded(updatedBlock);
   }
 
   /// Elimina un bloque existente de la rutina activa.
@@ -2828,9 +3150,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
             ...record.blocks,
             ...datedBlocksForDate.map(cloneBlockForDailyRecord),
           ]);
-    final hasScheduledRoutine =
-        activeRoutine!.appliesOn(date) || datedBlocksForDate.isNotEmpty;
+    final hasRoutinePreview = activeRoutine!.appliesOn(date);
+    final hasDatedEntries = datedEntries.isNotEmpty;
+    final hasScheduledRoutine = hasRoutinePreview || hasDatedEntries;
     final isFuture = isFutureCalendarDay(date);
+    final canManageDatedEntries =
+        !DateTime(date.year, date.month, date.day).isBefore(
+          DateTime(todayDate.year, todayDate.month, todayDate.day),
+        );
     final previewBlocks = activeRoutine!.blocks
         .map((block) => cloneBlockForDailyRecord(block, isDone: false))
         .toList();
@@ -2888,11 +3215,18 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         color: Colors.white70,
                       ),
                     )
-                  else if (hasScheduledRoutine)
+                  else if (hasRoutinePreview)
                     Text(
                       isFuture
                           ? 'Vista previa de ${activeRoutine!.name} para esta fecha'
                           : 'No hay registro guardado, pero esta rutina aplica en esta fecha',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    )
+                  else if (hasDatedEntries)
+                    Text(
+                      'No hay rutina base para esta fecha, pero si tienes eventos puntuales guardados.',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: Colors.white70,
                       ),
@@ -2937,13 +3271,25 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         Chip(
                           avatar:
                               const Icon(Icons.visibility_outlined, size: 18),
-                          label: Text(isFuture ? 'Vista previa' : 'Sin registro'),
+                          label: Text(
+                            hasRoutinePreview
+                                ? (isFuture ? 'Vista previa' : 'Sin registro')
+                                : 'Solo eventos puntuales',
+                          ),
                         ),
                         Chip(
                           avatar:
                               const Icon(Icons.view_list_rounded, size: 18),
                           label: Text('${previewAndReminderBlocks.length} bloques'),
                         ),
+                        if (datedEntries.isNotEmpty)
+                          Chip(
+                            avatar: const Icon(
+                              Icons.event_available_rounded,
+                              size: 18,
+                            ),
+                            label: Text('${datedEntries.length} puntuales'),
+                          ),
                         if (routinesForDate.length > 1)
                           Chip(
                             avatar:
@@ -3019,9 +3365,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                       ),
                     ),
                   ],
-                  if (!DateTime(date.year, date.month, date.day).isBefore(
-                    DateTime(todayDate.year, todayDate.month, todayDate.day),
-                  )) ...[
+                  if (canManageDatedEntries) ...[
                     const SizedBox(height: 12),
                     Align(
                       alignment: Alignment.centerLeft,
@@ -3044,7 +3388,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                   const SizedBox(height: 18),
                   Expanded(
                     child: record != null
-                        ? (recordAndReminderBlocks.isEmpty
+                        ? (record.blocks.isEmpty && datedEntries.isEmpty
                             ? Center(
                                 child: Text(
                                   'Este dia no tuvo bloques registrados.',
@@ -3053,41 +3397,17 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                   ),
                                 ),
                               )
-                            : ListView.builder(
-                                itemCount: recordAndReminderBlocks.length,
-                                itemBuilder: (context, index) {
-                                  final block = recordAndReminderBlocks[index];
-
-                                  return TimeBlock(
-                                    start: block.start,
-                                    end: block.end,
-                                    title: block.title,
-                                    description: block.description,
-                                    type: block.type,
-                                    countsTowardProgress:
-                                        block.countsTowardProgress,
-                                    receivesPushNotification:
-                                        block.receivesPushNotification,
-                                    isDone: block.isDone,
-                                  );
-                                },
-                              ))
-                        : hasScheduledRoutine
-                            ? (previewAndReminderBlocks.isEmpty
-                                ? Center(
-                                    child: Text(
-                                      'La rutina aplica en esta fecha, pero todavia no tiene bloques.',
-                                      style:
-                                          theme.textTheme.bodyMedium?.copyWith(
-                                        color: Colors.white70,
+                            : ListView(
+                                children: [
+                                  if (record.blocks.isNotEmpty) ...[
+                                    Text(
+                                      'Rutina registrada',
+                                      style: theme.textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w800,
                                       ),
                                     ),
-                                  )
-                                : ListView.builder(
-                                    itemCount: previewAndReminderBlocks.length,
-                                    itemBuilder: (context, index) {
-                                      final block = previewAndReminderBlocks[index];
-
+                                    const SizedBox(height: 10),
+                                    ...record.blocks.map((block) {
                                       return TimeBlock(
                                         start: block.start,
                                         end: block.end,
@@ -3098,9 +3418,189 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                             block.countsTowardProgress,
                                         receivesPushNotification:
                                             block.receivesPushNotification,
-                                        isDone: false,
+                                        isDone: block.isDone,
                                       );
-                                    },
+                                    }),
+                                  ],
+                                  if (datedEntries.isNotEmpty) ...[
+                                    if (record.blocks.isNotEmpty)
+                                      const SizedBox(height: 14),
+                                    Text(
+                                      'Eventos puntuales',
+                                      style: theme.textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    ...datedEntries.map((entry) {
+                                      final block = entry.block;
+
+                                      return Card(
+                                        margin: const EdgeInsets.only(bottom: 12),
+                                        child: ListTile(
+                                          leading: const Icon(
+                                            Icons.event_available_rounded,
+                                          ),
+                                          title: Text(block.title),
+                                          subtitle: Text(
+                                            '${block.start} - ${block.end}${block.description.trim().isEmpty ? '' : ' | ${block.description}'}',
+                                          ),
+                                          trailing: canManageDatedEntries
+                                              ? Wrap(
+                                                  spacing: 4,
+                                                  children: [
+                                                    IconButton(
+                                                      tooltip: 'Editar evento',
+                                                      onPressed: () async {
+                                                        Navigator.of(context).pop();
+                                                        await editDatedBlockEntry(
+                                                          entry,
+                                                        );
+                                                        if (!mounted) return;
+                                                        await showCalendarDateDetails(
+                                                          date,
+                                                        );
+                                                      },
+                                                      icon: const Icon(
+                                                        Icons.edit_rounded,
+                                                      ),
+                                                    ),
+                                                    IconButton(
+                                                      tooltip: 'Eliminar evento',
+                                                      onPressed: () async {
+                                                        Navigator.of(context).pop();
+                                                        await deleteDatedBlockEntry(
+                                                          entry,
+                                                        );
+                                                        if (!mounted) return;
+                                                        await showCalendarDateDetails(
+                                                          date,
+                                                        );
+                                                      },
+                                                      icon: const Icon(
+                                                        Icons.delete_outline_rounded,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                )
+                                              : null,
+                                        ),
+                                      );
+                                    }),
+                                  ],
+                                ],
+                              ))
+                        : hasScheduledRoutine
+                            ? (previewBlocks.isEmpty && datedEntries.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      'La rutina aplica en esta fecha, pero todavia no tiene bloques.',
+                                      style:
+                                          theme.textTheme.bodyMedium?.copyWith(
+                                        color: Colors.white70,
+                                      ),
+                                    ),
+                                  )
+                                : ListView(
+                                    children: [
+                                      if (previewBlocks.isNotEmpty) ...[
+                                        Text(
+                                          hasRoutinePreview
+                                              ? 'Vista previa de la rutina'
+                                              : 'Plan base',
+                                          style: theme.textTheme.titleSmall?.copyWith(
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        ...previewBlocks.map((block) {
+                                          return TimeBlock(
+                                            start: block.start,
+                                            end: block.end,
+                                            title: block.title,
+                                            description: block.description,
+                                            type: block.type,
+                                            countsTowardProgress:
+                                                block.countsTowardProgress,
+                                            receivesPushNotification:
+                                                block.receivesPushNotification,
+                                            isDone: false,
+                                          );
+                                        }),
+                                      ],
+                                      if (datedEntries.isNotEmpty) ...[
+                                        if (previewBlocks.isNotEmpty)
+                                          const SizedBox(height: 14),
+                                        Text(
+                                          'Eventos puntuales',
+                                          style: theme.textTheme.titleSmall?.copyWith(
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        ...datedEntries.map((entry) {
+                                          final block = entry.block;
+
+                                          return Card(
+                                            margin: const EdgeInsets.only(
+                                              bottom: 12,
+                                            ),
+                                            child: ListTile(
+                                              leading: const Icon(
+                                                Icons.event_available_rounded,
+                                              ),
+                                              title: Text(block.title),
+                                              subtitle: Text(
+                                                '${block.start} - ${block.end}${block.description.trim().isEmpty ? '' : ' | ${block.description}'}',
+                                              ),
+                                              trailing: canManageDatedEntries
+                                                  ? Wrap(
+                                                      spacing: 4,
+                                                      children: [
+                                                        IconButton(
+                                                          tooltip: 'Editar evento',
+                                                          onPressed: () async {
+                                                            Navigator.of(context)
+                                                                .pop();
+                                                            await editDatedBlockEntry(
+                                                              entry,
+                                                            );
+                                                            if (!mounted) return;
+                                                            await showCalendarDateDetails(
+                                                              date,
+                                                            );
+                                                          },
+                                                          icon: const Icon(
+                                                            Icons.edit_rounded,
+                                                          ),
+                                                        ),
+                                                        IconButton(
+                                                          tooltip:
+                                                              'Eliminar evento',
+                                                          onPressed: () async {
+                                                            Navigator.of(context)
+                                                                .pop();
+                                                            await deleteDatedBlockEntry(
+                                                              entry,
+                                                            );
+                                                            if (!mounted) return;
+                                                            await showCalendarDateDetails(
+                                                              date,
+                                                            );
+                                                          },
+                                                          icon: const Icon(
+                                                            Icons
+                                                                .delete_outline_rounded,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    )
+                                                  : null,
+                                            ),
+                                          );
+                                        }),
+                                      ],
+                                    ],
                                   ))
                             : Center(
                                 child: Padding(
@@ -3133,13 +3633,37 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                         ),
                                       ),
                                       const SizedBox(height: 16),
-                                      FilledButton.tonalIcon(
-                                        onPressed: () async {
-                                          Navigator.of(context).pop();
-                                          await showRoutineManagerSheet();
-                                        },
-                                        icon: const Icon(Icons.tune_rounded),
-                                        label: const Text('Gestionar rutinas'),
+                                      Wrap(
+                                        spacing: 10,
+                                        runSpacing: 10,
+                                        alignment: WrapAlignment.center,
+                                        children: [
+                                          FilledButton.tonalIcon(
+                                            onPressed: () async {
+                                              Navigator.of(context).pop();
+                                              await showRoutineManagerSheet();
+                                            },
+                                            icon: const Icon(Icons.tune_rounded),
+                                            label: const Text('Gestionar rutinas'),
+                                          ),
+                                          if (canManageDatedEntries)
+                                            OutlinedButton.icon(
+                                              onPressed: () async {
+                                                Navigator.of(context).pop();
+                                                await createDatedBlockForDate(date);
+                                                if (!mounted) return;
+                                                await showCalendarDateDetails(
+                                                  date,
+                                                );
+                                              },
+                                              icon: const Icon(
+                                                Icons.event_available_rounded,
+                                              ),
+                                              label: const Text(
+                                                'Agregar evento puntual',
+                                              ),
+                                            ),
+                                        ],
                                       ),
                                     ],
                                   ),
@@ -4131,6 +4655,107 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 
+  /// Resume el estado actual del sistema de notificaciones para la UI.
+  String get notificationStatusDescription {
+    if (!NotificationService.supportsLocalNotifications) {
+      return 'Esta plataforma web conserva la preferencia, pero no agenda recordatorios locales.';
+    }
+
+    if (notificationsEnabled == false) {
+      return 'Los recordatorios existen, pero el dispositivo parece tener las notificaciones desactivadas.';
+    }
+
+    if (scheduledNotificationsCount == 0) {
+      return 'Aun no hay recordatorios futuros programados. Revisa si los bloques con push estan en el futuro.';
+    }
+
+    return 'Ritual tiene $scheduledNotificationsCount recordatorios futuros programados en este dispositivo.';
+  }
+
+  Widget buildNotificationStatusCard({
+    required BuildContext context,
+    required int pushEnabledBlocksCount,
+  }) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFA24D).withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFFFA24D).withValues(alpha: 0.18),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Recordatorios del dispositivo',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            notificationStatusDescription,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: Colors.white70,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              Chip(
+                avatar: const Icon(Icons.notifications_active_outlined, size: 18),
+                label: Text('$pushEnabledBlocksCount bloques con push'),
+              ),
+              if (NotificationService.supportsLocalNotifications)
+                Chip(
+                  avatar: const Icon(Icons.schedule_send_rounded, size: 18),
+                  label: Text('$scheduledNotificationsCount programadas'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (NotificationService.supportsLocalNotifications)
+                FilledButton.tonalIcon(
+                  onPressed: isNotificationActionInProgress
+                      ? null
+                      : requestNotificationPermissionsFromUi,
+                  icon: const Icon(Icons.notifications_outlined),
+                  label: const Text('Revisar permisos'),
+                ),
+              if (NotificationService.supportsLocalNotifications)
+                OutlinedButton.icon(
+                  onPressed: isNotificationActionInProgress
+                      ? null
+                      : resyncNotificationsFromUi,
+                  icon: const Icon(Icons.sync_rounded),
+                  label: const Text('Reagendar'),
+                ),
+              if (NotificationService.supportsLocalNotifications)
+                OutlinedButton.icon(
+                  onPressed: isNotificationActionInProgress
+                      ? null
+                      : sendTestNotificationFromUi,
+                  icon: const Icon(Icons.bolt_rounded),
+                  label: const Text('Probar ahora'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (activeRoutine == null) {
@@ -4179,8 +4804,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           Padding(
             padding: const EdgeInsets.only(right: 4),
             child: IconButton(
-              tooltip: 'Agregar bloque',
-              onPressed: createBlock,
+              tooltip: 'Agregar',
+              onPressed: showQuickCreateSheet,
               icon: const Icon(Icons.add_task_rounded),
             ),
           ),
@@ -4287,6 +4912,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           notice: notice,
                         ),
                       ),
+                    ),
+                  ],
+                  if (pushEnabledBlocksCount > 0) ...[
+                    const SizedBox(height: 6),
+                    buildNotificationStatusCard(
+                      context: context,
+                      pushEnabledBlocksCount: pushEnabledBlocksCount,
                     ),
                   ],
                   if (shouldOfferSuggestedRoutineSwitch) ...[
@@ -4541,9 +5173,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: createBlock,
+        onPressed: showQuickCreateSheet,
         icon: const Icon(Icons.add),
-        label: const Text('Bloque'),
+        label: const Text('Agregar'),
       ),
     );
   }
