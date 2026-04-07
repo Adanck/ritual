@@ -221,6 +221,42 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     return datedBlocks.where((entry) => entry.dateKey == dateKey).toList();
   }
 
+  /// Devuelve los proximos eventos puntuales a partir de hoy.
+  ///
+  /// Regla: se ordenan por fecha y hora para que el usuario vea primero lo mas
+  /// cercano. Caso borde: ignoramos eventos pasados porque ya tienen mejor
+  /// representacion dentro del historial o del detalle de su fecha.
+  List<DatedBlockEntry> getUpcomingDatedBlocks({
+    int daysAhead = 14,
+    int limit = 4,
+  }) {
+    final today = DateTime(todayDate.year, todayDate.month, todayDate.day);
+    final lastDate = today.add(Duration(days: daysAhead));
+    final sortedEntries = [...datedBlocks]
+      ..sort((a, b) {
+        final aDateTime = DateKey.toDate(a.dateKey);
+        final bDateTime = DateKey.toDate(b.dateKey);
+        final dateComparison = aDateTime.compareTo(bDateTime);
+        if (dateComparison != 0) return dateComparison;
+
+        final aTime = DayBlockTimeValidator.parseTime(a.block.start);
+        final bTime = DayBlockTimeValidator.parseTime(b.block.start);
+        final aMinutes =
+            aTime == null ? 0 : (aTime.hour * 60) + aTime.minute;
+        final bMinutes =
+            bTime == null ? 0 : (bTime.hour * 60) + bTime.minute;
+        return aMinutes.compareTo(bMinutes);
+      });
+
+    return sortedEntries
+        .where((entry) {
+          final entryDate = DateKey.toDate(entry.dateKey);
+          return !entryDate.isBefore(today) && !entryDate.isAfter(lastDate);
+        })
+        .take(limit)
+        .toList();
+  }
+
   DatedBlockEntry? getDatedBlockEntryById(String blockId) {
     return datedBlocks.cast<DatedBlockEntry?>().firstWhere(
           (entry) => entry?.block.id == blockId,
@@ -4756,6 +4792,113 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 
+  /// Muestra los proximos eventos puntuales para que no dependan solo del
+  /// calendario como punto de acceso.
+  Widget buildUpcomingDatedEventsCard({
+    required BuildContext context,
+    required List<DatedBlockEntry> entries,
+  }) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF7A6B).withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFFF7A6B).withValues(alpha: 0.18),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Proximos eventos puntuales',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Bloques aislados por fecha que no modifican tu rutina base.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: Colors.white70,
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...entries.map((entry) {
+            final isTodayEvent = entry.dateKey == todayKey;
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.05),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF7A6B).withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.event_available_rounded,
+                      color: Color(0xFFFF7A6B),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          entry.block.title,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${isTodayEvent ? 'Hoy' : DateKey.formatForDisplay(entry.dateKey)} | ${entry.block.start} - ${entry.block.end}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: Colors.white70,
+                          ),
+                        ),
+                        if (entry.block.description.trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            entry.block.description,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: Colors.white60,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          OutlinedButton.icon(
+            onPressed: showCalendarHistorySheet,
+            icon: const Icon(Icons.calendar_month_rounded),
+            label: const Text('Ver calendario'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (activeRoutine == null) {
@@ -4773,6 +4916,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         blocks.where((block) => !block.countsTowardProgress).length;
     final pushEnabledBlocksCount =
         blocks.where((block) => block.receivesPushNotification).length;
+    final upcomingDatedEntries = getUpcomingDatedBlocks();
     final insights = activeRoutineInsights;
     final isScheduledToday = isActiveRoutineScheduledToday;
     final routineNotices = activeRoutineNotices;
@@ -4957,6 +5101,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           ),
                         ],
                       ),
+                    ),
+                  ],
+                  if (upcomingDatedEntries.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    buildUpcomingDatedEventsCard(
+                      context: context,
+                      entries: upcomingDatedEntries,
                     ),
                   ],
                   const SizedBox(height: 16),
