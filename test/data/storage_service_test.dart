@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
+import 'package:ritual/data/models/app_settings.dart';
 import 'package:ritual/data/models/block_type.dart';
 import 'package:ritual/data/models/dated_block_entry.dart';
 import 'package:ritual/data/models/daily_record.dart';
@@ -180,5 +181,22 @@ void main() {
     expect(loadedRoutines.first.blocks.first.endMinutes, 435);
     expect(loadedRoutines.first.blocks.first.start, '06:30');
     expect(loadedRoutines.first.blocks.first.end, '07:15');
+  });
+
+  test('saveAppSettings and loadAppSettings preserve global preferences', () async {
+    const settings = AppSettings(
+      warnOnOverlaps: false,
+      autoRequestNotificationPermissions: false,
+      notificationHorizonDays: 14,
+      showCompletedDatedEventsInUpcoming: false,
+    );
+
+    await StorageService.saveAppSettings(settings);
+    final loadedSettings = await StorageService.loadAppSettings();
+
+    expect(loadedSettings.warnOnOverlaps, isFalse);
+    expect(loadedSettings.autoRequestNotificationPermissions, isFalse);
+    expect(loadedSettings.notificationHorizonDays, 14);
+    expect(loadedSettings.showCompletedDatedEventsInUpcoming, isFalse);
   });
 }

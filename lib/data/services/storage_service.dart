@@ -1,6 +1,7 @@
 import 'package:hive/hive.dart';
 
 import '../models/block_type.dart';
+import '../models/app_settings.dart';
 import '../models/dated_block_entry.dart';
 import '../models/daily_record.dart';
 import '../models/day_block.dart';
@@ -13,6 +14,7 @@ class StorageService {
   static const String routinesKey = 'routines';
   static const String dailyRecordsKey = 'dailyRecords';
   static const String datedBlocksKey = 'datedBlocks';
+  static const String appSettingsKey = 'appSettings';
 
   /// Serializa y guarda todas las rutinas.
   static Future<void> saveRoutines(List<Routine> routines) async {
@@ -215,5 +217,44 @@ class StorageService {
         ),
       );
     }).toList();
+  }
+
+  /// Guarda preferencias globales de la aplicacion.
+  ///
+  /// Estas opciones afectan comportamientos transversales como avisos de
+  /// traslape, horizonte de notificaciones y visibilidad de eventos completados.
+  static Future<void> saveAppSettings(AppSettings settings) async {
+    final box = await Hive.openBox(boxName);
+
+    await box.put(appSettingsKey, {
+      'warnOnOverlaps': settings.warnOnOverlaps,
+      'autoRequestNotificationPermissions':
+          settings.autoRequestNotificationPermissions,
+      'notificationHorizonDays': settings.notificationHorizonDays,
+      'showCompletedDatedEventsInUpcoming':
+          settings.showCompletedDatedEventsInUpcoming,
+    });
+  }
+
+  /// Carga preferencias globales persistidas.
+  ///
+  /// Caso borde: si todavia no existen, devolvemos los defaults del producto
+  /// para no romper instalaciones previas.
+  static Future<AppSettings> loadAppSettings() async {
+    final box = await Hive.openBox(boxName);
+    final data = box.get(appSettingsKey);
+
+    if (data is! Map) {
+      return const AppSettings();
+    }
+
+    return AppSettings(
+      warnOnOverlaps: data['warnOnOverlaps'] ?? true,
+      autoRequestNotificationPermissions:
+          data['autoRequestNotificationPermissions'] ?? true,
+      notificationHorizonDays: data['notificationHorizonDays'] ?? 21,
+      showCompletedDatedEventsInUpcoming:
+          data['showCompletedDatedEventsInUpcoming'] ?? true,
+    );
   }
 }

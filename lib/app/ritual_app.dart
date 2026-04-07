@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-
-import '../features/today/today_page.dart';
+import 'package:ritual/features/today/today_page.dart';
 
 class RitualApp extends StatelessWidget {
   const RitualApp({super.key});

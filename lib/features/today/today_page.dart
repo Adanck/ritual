@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:ritual/core/models/notification_diagnostics.dart';
 import 'package:ritual/core/services/notification_service.dart';
 import 'package:ritual/core/services/today_notification_coordinator.dart';
@@ -8,6 +8,7 @@ import 'package:ritual/core/utils/day_block_time_validator.dart';
 import 'package:ritual/core/utils/routine_history_insights.dart';
 import 'package:ritual/core/utils/today_calendar_utils.dart';
 import 'package:ritual/core/utils/today_routine_utils.dart';
+import 'package:ritual/data/models/app_settings.dart';
 import 'package:ritual/data/models/block_type.dart';
 import 'package:ritual/data/models/dated_block_entry.dart';
 import 'package:ritual/data/models/daily_record.dart';
@@ -15,6 +16,7 @@ import 'package:ritual/data/models/day_block.dart';
 import 'package:ritual/data/models/routine.dart';
 import 'package:ritual/data/models/routine_schedule.dart';
 import 'package:ritual/data/services/storage_service.dart';
+import 'package:ritual/features/settings/settings_page.dart';
 import 'package:ritual/shared/widgets/today_calendar_widgets.dart';
 import 'package:ritual/shared/widgets/time_block.dart';
 
@@ -72,6 +74,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   List<Routine> routines = [];
   List<DailyRecord> dailyRecords = [];
   List<DatedBlockEntry> datedBlocks = [];
+  AppSettings appSettings = const AppSettings();
   Routine? activeRoutine;
   NotificationDiagnostics notificationDiagnostics =
       const NotificationDiagnostics.unsupported();
@@ -218,12 +221,18 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     int daysAhead = 14,
     int limit = 4,
   }) {
-    return DayBlockCollectionUtils.getUpcomingDatedBlocks(
+    final entries = DayBlockCollectionUtils.getUpcomingDatedBlocks(
       datedBlocks: datedBlocks,
       todayDate: todayDate,
       daysAhead: daysAhead,
-      limit: limit,
+      limit: 100,
     );
+
+    final filteredEntries = appSettings.showCompletedDatedEventsInUpcoming
+        ? entries
+        : entries.where((entry) => !entry.block.isDone).toList();
+
+    return filteredEntries.take(limit).toList();
   }
 
   /// Vista previa pura de la agenda de notificaciones con el estado actual.
@@ -237,6 +246,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       datedBlocks: datedBlocks,
       activeRoutineId: activeRoutine?.id,
       anchorDate: todayDate,
+      horizonDays: appSettings.notificationHorizonDays,
     );
   }
 
@@ -388,6 +398,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     DayBlock? blockBeingEdited,
     required String scopeLabel,
   }) async {
+    if (!appSettings.warnOnOverlaps) return true;
+
     final hasOverlap = DayBlockTimeValidator.hasOverlap(
       start: candidateBlock.start,
       end: candidateBlock.end,
@@ -541,9 +553,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final savedRoutines = await StorageService.loadRoutines();
     final savedDailyRecords = await StorageService.loadDailyRecords();
     final savedDatedBlocks = await StorageService.loadDatedBlocks();
+    final savedAppSettings = await StorageService.loadAppSettings();
 
     dailyRecords = savedDailyRecords;
     datedBlocks = savedDatedBlocks;
+    appSettings = savedAppSettings;
 
     if (savedRoutines.isEmpty) {
       routines = [
@@ -727,6 +741,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       datedBlocks: datedBlocks,
       activeRoutineId: activeRoutine?.id,
       anchorDate: todayDate,
+      horizonDays: appSettings.notificationHorizonDays,
     );
     await refreshNotificationDiagnostics(previewEntries: previewEntries);
   }
@@ -821,6 +836,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// Cuando un bloque activa push, intentamos dejar listo el permiso y la
   /// agenda para que la experiencia sea mas confiable desde el primer uso.
   Future<void> prepareNotificationsForBlockIfNeeded(DayBlock block) async {
+    if (!appSettings.autoRequestNotificationPermissions &&
+        block.receivesPushNotification) {
+      await syncNotificationsWithStoredState();
+      return;
+    }
+
     final diagnostics = await TodayNotificationCoordinator.prepareForBlockIfNeeded(
       block: block,
       syncNotifications: syncNotificationsWithStoredState,
@@ -846,17 +867,17 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final timeLabel = '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
 
     if (TodayCalendarUtils.isSameCalendarDay(targetDay, normalizedToday)) {
-      return 'Hoy · $timeLabel';
+      return 'Hoy Â· $timeLabel';
     }
 
     if (TodayCalendarUtils.isSameCalendarDay(
       targetDay,
       normalizedToday.add(const Duration(days: 1)),
     )) {
-      return 'Mañana · $timeLabel';
+      return 'Mañana Â· $timeLabel';
     }
 
-    return '${DateKey.formatForDisplay(DateKey.fromDate(dateTime))} · $timeLabel';
+    return '${DateKey.formatForDisplay(DateKey.fromDate(dateTime))} Â· $timeLabel';
   }
 
   String buildPushFeedbackForBlock({
@@ -874,7 +895,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final nextWhen = nextScheduledNotificationAt;
 
     if (!isScheduled) {
-      return '$baseMessage Ritual intentó programar el recordatorio, pero no quedó ninguno futuro para este bloque. Revisa hora, fecha y permisos.';
+      return '$baseMessage Ritual intentÃ³ programar el recordatorio, pero no quedÃ³ ninguno futuro para este bloque. Revisa hora, fecha y permisos.';
     }
 
     if (nextWhen == null) {
@@ -2520,7 +2541,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     await saveDatedBlocksAndRefresh();
     showFeedbackMessage(
       entry.block.receivesPushNotification
-          ? 'Evento puntual eliminado. Si tenia recordatorio push, Ritual ya lo sacó de la agenda.'
+          ? 'Evento puntual eliminado. Si tenia recordatorio push, Ritual ya lo sacÃ³ de la agenda.'
           : 'Evento puntual eliminado.',
     );
   }
@@ -2697,8 +2718,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       await saveDatedBlocksAndRefresh();
       showFeedbackMessage(
         reminderEntry.block.receivesPushNotification
-            ? 'Evento puntual eliminado del día. Si tenia push, ya se canceló.'
-            : 'Evento puntual eliminado del día.',
+            ? 'Evento puntual eliminado del dÃ­a. Si tenia push, ya se cancelÃ³.'
+            : 'Evento puntual eliminado del dÃ­a.',
       );
       return;
     }
@@ -2730,7 +2751,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       await saveDailyRecordsAndRefresh();
       if (block.receivesPushNotification) {
         showFeedbackMessage(
-          'Bloque eliminado solo de hoy. Si tenia recordatorio push, Ritual ya actualizó la agenda.',
+          'Bloque eliminado solo de hoy. Si tenia recordatorio push, Ritual ya actualizÃ³ la agenda.',
         );
       }
       return;
@@ -2746,7 +2767,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     await saveRoutinesAndRefresh();
     if (block.receivesPushNotification) {
       showFeedbackMessage(
-        'Bloque eliminado de la rutina. Si tenia recordatorio push, Ritual ya actualizó la agenda.',
+        'Bloque eliminado de la rutina. Si tenia recordatorio push, Ritual ya actualizÃ³ la agenda.',
       );
     }
   }
@@ -4084,6 +4105,27 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     return DateKey.formatForDisplay(entry.dateKey);
   }
 
+  /// Abre ajustes, persiste cambios globales y resincroniza la agenda si hace
+  /// falta.
+  Future<void> openSettingsPage() async {
+    final updatedSettings = await Navigator.of(context).push<AppSettings>(
+      MaterialPageRoute(
+        builder: (_) => SettingsPage(initialSettings: appSettings),
+      ),
+    );
+
+    if (updatedSettings == null) return;
+
+    appSettings = updatedSettings;
+    await StorageService.saveAppSettings(updatedSettings);
+    await syncNotificationsWithStoredState();
+
+    if (!mounted) return;
+    setState(() {});
+
+    showFeedbackMessage('Ajustes guardados.');
+  }
+
   Widget buildNotificationStatusCard({
     required BuildContext context,
     required int pushEnabledBlocksCount,
@@ -4179,7 +4221,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Próximo recordatorio: ${formatNotificationWhen(notificationDiagnostics.nextScheduledAt!)}',
+                      'PrÃ³ximo recordatorio: ${formatNotificationWhen(notificationDiagnostics.nextScheduledAt!)}',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: Colors.white70,
                         fontWeight: FontWeight.w600,
@@ -4491,6 +4533,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
               tooltip: 'Agregar',
               onPressed: showQuickCreateSheet,
               icon: const Icon(Icons.add_task_rounded),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: IconButton(
+              tooltip: 'Ajustes',
+              onPressed: openSettingsPage,
+              icon: const Icon(Icons.settings_rounded),
             ),
           ),
           Padding(
@@ -4873,4 +4923,6 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 }
+
+
 
