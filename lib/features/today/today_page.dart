@@ -226,6 +226,45 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 
+  /// Vista previa pura de la agenda de notificaciones con el estado actual.
+  ///
+  /// Nos sirve para mostrar el siguiente recordatorio esperado y para saber si
+  /// un evento puntual concreto quedo cubierto por la agenda local.
+  List<NotificationPreviewEntry> get notificationPreviewEntries {
+    return NotificationService.buildPreviewEntries(
+      routines: routines,
+      dailyRecords: dailyRecords,
+      datedBlocks: datedBlocks,
+      activeRoutineId: activeRoutine?.id,
+      anchorDate: todayDate,
+    );
+  }
+
+  Set<String> get scheduledNotificationSourceKeys {
+    return notificationPreviewEntries.map((entry) => entry.sourceKey).toSet();
+  }
+
+  DateTime? get nextScheduledNotificationAt {
+    final entries = notificationPreviewEntries;
+    return entries.isEmpty ? null : entries.first.when;
+  }
+
+  String buildDatedEntryNotificationSourceKey(DatedBlockEntry entry) {
+    return 'dated:${entry.dateKey}:${entry.block.id}';
+  }
+
+  bool isDatedEntryNotificationScheduled(DatedBlockEntry entry) {
+    return scheduledNotificationSourceKeys.contains(
+      buildDatedEntryNotificationSourceKey(entry),
+    );
+  }
+
+  bool isBlockNotificationScheduled(DayBlock block) {
+    return notificationPreviewEntries.any(
+      (entry) => entry.sourceKey.endsWith(':${block.id}'),
+    );
+  }
+
   DatedBlockEntry? getDatedBlockEntryById(String blockId) {
     return datedBlocks.cast<DatedBlockEntry?>().firstWhere(
           (entry) => entry?.block.id == blockId,
@@ -681,6 +720,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// fechados para que las notificaciones siempre reflejen lo ultimo que el
   /// usuario decidio en la UI.
   Future<void> syncNotificationsWithStoredState() async {
+    final previewEntries = notificationPreviewEntries;
     await NotificationService.syncScheduledNotifications(
       routines: routines,
       dailyRecords: dailyRecords,
@@ -688,7 +728,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       activeRoutineId: activeRoutine?.id,
       anchorDate: todayDate,
     );
-    await refreshNotificationDiagnostics();
+    await refreshNotificationDiagnostics(previewEntries: previewEntries);
   }
 
   /// Lee el estado actual de permisos y cantidad de recordatorios agendados.
@@ -696,8 +736,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// Regla: este diagnostico no bloquea la app. Si la plataforma no expone
   /// permisos detallados, el coordinador devuelve un estado neutro y la UI
   /// muestra solo la informacion que realmente conoce.
-  Future<void> refreshNotificationDiagnostics() async {
-    final diagnostics = await TodayNotificationCoordinator.refreshDiagnostics();
+  Future<void> refreshNotificationDiagnostics({
+    List<NotificationPreviewEntry>? previewEntries,
+  }) async {
+    final diagnostics = await TodayNotificationCoordinator.refreshDiagnostics(
+      previewEntries: previewEntries ?? notificationPreviewEntries,
+    );
 
     if (!mounted) return;
     setState(() {
@@ -786,6 +830,58 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     setState(() {
       notificationDiagnostics = diagnostics;
     });
+  }
+
+  void showFeedbackMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  String formatNotificationWhen(DateTime dateTime) {
+    final normalizedToday = DateTime(todayDate.year, todayDate.month, todayDate.day);
+    final targetDay = DateTime(dateTime.year, dateTime.month, dateTime.day);
+    final timeLabel = '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+
+    if (TodayCalendarUtils.isSameCalendarDay(targetDay, normalizedToday)) {
+      return 'Hoy · $timeLabel';
+    }
+
+    if (TodayCalendarUtils.isSameCalendarDay(
+      targetDay,
+      normalizedToday.add(const Duration(days: 1)),
+    )) {
+      return 'Mañana · $timeLabel';
+    }
+
+    return '${DateKey.formatForDisplay(DateKey.fromDate(dateTime))} · $timeLabel';
+  }
+
+  String buildPushFeedbackForBlock({
+    required DayBlock block,
+    required String baseMessage,
+    DatedBlockEntry? datedEntry,
+  }) {
+    if (!block.receivesPushNotification) {
+      return '$baseMessage No agenda recordatorio push porque ese toggle esta apagado.';
+    }
+
+    final isScheduled = datedEntry != null
+        ? isDatedEntryNotificationScheduled(datedEntry)
+        : isBlockNotificationScheduled(block);
+    final nextWhen = nextScheduledNotificationAt;
+
+    if (!isScheduled) {
+      return '$baseMessage Ritual intentó programar el recordatorio, pero no quedó ninguno futuro para este bloque. Revisa hora, fecha y permisos.';
+    }
+
+    if (nextWhen == null) {
+      return '$baseMessage Recordatorio push programado.';
+    }
+
+    return '$baseMessage Recordatorio push programado para ${formatNotificationWhen(nextWhen)}.';
   }
 
   /// Marca o desmarca un bloque del registro diario activo y persiste el cambio.
@@ -2104,6 +2200,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
       await saveDailyRecordsAndRefresh();
       await prepareNotificationsForBlockIfNeeded(createdBlock);
+      if (createdBlock.receivesPushNotification) {
+        showFeedbackMessage(
+          buildPushFeedbackForBlock(
+            block: createdBlock,
+            baseMessage: 'Bloque agregado solo para hoy.',
+          ),
+        );
+      }
       return;
     }
 
@@ -2127,6 +2231,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     await saveRoutinesAndRefresh();
     await prepareNotificationsForBlockIfNeeded(createdBlock);
+    if (createdBlock.receivesPushNotification) {
+      showFeedbackMessage(
+        buildPushFeedbackForBlock(
+          block: createdBlock,
+          baseMessage: 'Bloque agregado a la rutina.',
+        ),
+      );
+    }
   }
 
   /// Crea un bloque puntual asociado a una fecha concreta.
@@ -2183,6 +2295,17 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     await saveDatedBlocksAndRefresh();
     await prepareNotificationsForBlockIfNeeded(datedBlock);
+    showFeedbackMessage(
+      buildPushFeedbackForBlock(
+        block: datedBlock,
+        datedEntry: DatedBlockEntry(
+          dateKey: normalizedDateKey,
+          block: datedBlock,
+        ),
+        baseMessage:
+            'Evento puntual guardado para ${DateKey.formatForDisplay(normalizedDateKey)}.',
+      ),
+    );
   }
 
   /// Edita un evento puntual directamente desde el detalle de una fecha.
@@ -2224,6 +2347,16 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     await saveDatedBlocksAndRefresh();
     await prepareNotificationsForBlockIfNeeded(updatedBlock);
+    showFeedbackMessage(
+      buildPushFeedbackForBlock(
+        block: updatedBlock,
+        datedEntry: DatedBlockEntry(
+          dateKey: entry.dateKey,
+          block: updatedBlock,
+        ),
+        baseMessage: 'Evento puntual actualizado.',
+      ),
+    );
   }
 
   /// Mueve un evento puntual a otra fecha sin convertirlo en parte de la
@@ -2280,6 +2413,17 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     await saveDatedBlocksAndRefresh();
     await prepareNotificationsForBlockIfNeeded(movedBlock);
+    showFeedbackMessage(
+      buildPushFeedbackForBlock(
+        block: movedBlock,
+        datedEntry: DatedBlockEntry(
+          dateKey: targetDateKey,
+          block: movedBlock,
+        ),
+        baseMessage:
+            'Evento puntual movido a ${DateKey.formatForDisplay(targetDateKey)}.',
+      ),
+    );
   }
 
   /// Duplica un evento puntual para otra fecha sin perder el original.
@@ -2330,6 +2474,17 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     await saveDatedBlocksAndRefresh();
     await prepareNotificationsForBlockIfNeeded(duplicatedBlock);
+    showFeedbackMessage(
+      buildPushFeedbackForBlock(
+        block: duplicatedBlock,
+        datedEntry: DatedBlockEntry(
+          dateKey: targetDateKey,
+          block: duplicatedBlock,
+        ),
+        baseMessage:
+            'Evento puntual duplicado en ${DateKey.formatForDisplay(targetDateKey)}.',
+      ),
+    );
   }
 
   /// Elimina un evento puntual sin tocar la rutina base ni el resto del dia.
@@ -2363,6 +2518,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     });
 
     await saveDatedBlocksAndRefresh();
+    showFeedbackMessage(
+      entry.block.receivesPushNotification
+          ? 'Evento puntual eliminado. Si tenia recordatorio push, Ritual ya lo sacó de la agenda.'
+          : 'Evento puntual eliminado.',
+    );
   }
 
   /// Edita un bloque existente reemplazandolo por una nueva version.
@@ -2416,6 +2576,18 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
       await saveDatedBlocksAndRefresh();
       await prepareNotificationsForBlockIfNeeded(updatedBlock);
+      if (updatedBlock.receivesPushNotification) {
+        showFeedbackMessage(
+          buildPushFeedbackForBlock(
+            block: updatedBlock,
+            datedEntry: DatedBlockEntry(
+              dateKey: reminderDateKey,
+              block: updatedBlock,
+            ),
+            baseMessage: 'Evento puntual actualizado.',
+          ),
+        );
+      }
       return;
     }
 
@@ -2464,6 +2636,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
       await saveDailyRecordsAndRefresh();
       await prepareNotificationsForBlockIfNeeded(updatedBlock);
+      if (updatedBlock.receivesPushNotification) {
+        showFeedbackMessage(
+          buildPushFeedbackForBlock(
+            block: updatedBlock,
+            baseMessage: 'Bloque de hoy actualizado.',
+          ),
+        );
+      }
       return;
     }
 
@@ -2491,6 +2671,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     await saveRoutinesAndRefresh();
     await prepareNotificationsForBlockIfNeeded(updatedBlock);
+    if (updatedBlock.receivesPushNotification) {
+      showFeedbackMessage(
+        buildPushFeedbackForBlock(
+          block: updatedBlock,
+          baseMessage: 'Bloque de la rutina actualizado.',
+        ),
+      );
+    }
   }
 
   /// Elimina un bloque existente de la rutina activa.
@@ -2507,6 +2695,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       });
 
       await saveDatedBlocksAndRefresh();
+      showFeedbackMessage(
+        reminderEntry.block.receivesPushNotification
+            ? 'Evento puntual eliminado del día. Si tenia push, ya se canceló.'
+            : 'Evento puntual eliminado del día.',
+      );
       return;
     }
 
@@ -2535,6 +2728,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       });
 
       await saveDailyRecordsAndRefresh();
+      if (block.receivesPushNotification) {
+        showFeedbackMessage(
+          'Bloque eliminado solo de hoy. Si tenia recordatorio push, Ritual ya actualizó la agenda.',
+        );
+      }
       return;
     }
 
@@ -2546,6 +2744,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     });
 
     await saveRoutinesAndRefresh();
+    if (block.receivesPushNotification) {
+      showFeedbackMessage(
+        'Bloque eliminado de la rutina. Si tenia recordatorio push, Ritual ya actualizó la agenda.',
+      );
+    }
   }
 
   /// Reordena los bloques de la rutina activa.
@@ -2587,38 +2790,6 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     return '${record.completedProgressBlocksCount}/${record.progressEligibleBlocksCount} bloques';
   }
 
-  Widget buildRecordStatusPill({
-    required BuildContext context,
-    required DailyRecord record,
-  }) {
-    final theme = Theme.of(context);
-    final color = record.isCompletedDay
-        ? const Color(0xFF41C47B)
-        : record.hasAnyCompletedBlocks
-            ? const Color(0xFF4DA3FF)
-            : Colors.white54;
-    final label = record.isCompletedDay
-        ? 'Dia completo'
-        : record.hasAnyCompletedBlocks
-            ? 'Con avance'
-            : 'Sin checks';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: color,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
   /// Muestra el detalle de un registro historico concreto.
   Future<void> showDailyRecordDetails(DailyRecord record) async {
     final progress = getRecordProgress(record);
@@ -2634,89 +2805,16 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       backgroundColor: Theme.of(context).colorScheme.surface,
       showDragHandle: true,
       builder: (context) {
-        final theme = Theme.of(context);
-
         return SafeArea(
           child: SizedBox(
             height: MediaQuery.of(context).size.height * 0.86,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    DateKey.formatForDisplay(
-                      record.dateKey,
-                      includeWeekday: true,
-                    ),
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${record.routineName} · ${buildRecordProgressLabel(record)}',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: Colors.white70,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      buildRecordStatusPill(context: context, record: record),
-                      Chip(
-                        avatar: const Icon(Icons.percent_rounded, size: 18),
-                        label: Text('${(progress * 100).round()}% progreso'),
-                      ),
-                      Chip(
-                        avatar: const Icon(Icons.task_alt_outlined, size: 18),
-                        label: Text('${record.completedBlocksCount} completados'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(999),
-                    child: LinearProgressIndicator(
-                      value: progress,
-                      minHeight: 10,
-                      valueColor: AlwaysStoppedAnimation<Color>(progressColor),
-                      backgroundColor: Colors.white12,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Expanded(
-                    child: record.blocks.isEmpty
-                        ? Center(
-                            child: Text(
-                              'Este dia no tuvo bloques registrados.',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: Colors.white70,
-                              ),
-                            ),
-                          )
-                        : ListView.builder(
-                            itemCount: record.blocks.length,
-                            itemBuilder: (context, index) {
-                              final block = record.blocks[index];
-
-                              return TimeBlock(
-                                start: block.start,
-                                end: block.end,
-                                title: block.title,
-                                description: block.description,
-                                type: block.type,
-                                countsTowardProgress: block.countsTowardProgress,
-                                receivesPushNotification:
-                                    block.receivesPushNotification,
-                                isDone: block.isDone,
-                              );
-                            },
-                          ),
-                  ),
-                ],
+              child: TodayDailyRecordDetailView(
+                record: record,
+                progress: progress,
+                progressColor: progressColor,
+                progressLabel: buildRecordProgressLabel(record),
               ),
             ),
           ),
@@ -2956,427 +3054,48 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       backgroundColor: Theme.of(context).colorScheme.surface,
       showDragHandle: true,
       builder: (context) {
-        final theme = Theme.of(context);
-
         return SafeArea(
           child: SizedBox(
             height: MediaQuery.of(context).size.height * 0.86,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    DateKey.formatForDisplay(
-                      DateKey.fromDate(date),
-                      includeWeekday: true,
-                    ),
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (record != null)
-                    Text(
-                      '${record.routineName} | ${buildRecordProgressLabel(record)}',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: Colors.white70,
-                      ),
-                    )
-                  else if (hasRoutinePreview)
-                    Text(
-                      isFuture
-                          ? 'Vista previa de ${activeRoutine!.name} para esta fecha'
-                          : 'No hay registro guardado, pero esta rutina aplica en esta fecha',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: Colors.white70,
-                      ),
-                    )
-                  else if (hasDatedEntries)
-                    Text(
-                      'No hay rutina base para esta fecha, pero si tienes eventos puntuales guardados.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: Colors.white70,
-                      ),
-                    )
-                  else
-                    Text(
-                      'No hay una rutina configurada para esta fecha.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: Colors.white70,
-                      ),
-                    ),
-                  const SizedBox(height: 14),
-                  if (record != null)
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        buildRecordStatusPill(context: context, record: record),
-                        Chip(
-                          avatar: const Icon(Icons.percent_rounded, size: 18),
-                          label: Text('${(progress * 100).round()}% progreso'),
-                        ),
-                        Chip(
-                          avatar: const Icon(Icons.task_alt_outlined, size: 18),
-                          label: Text(
-                            '${recordAndReminderBlocks.where((block) => block.isDone).length} completados',
-                          ),
-                        ),
-                        if (routinesForDate.length > 1)
-                          Chip(
-                            avatar:
-                                const Icon(Icons.layers_rounded, size: 18),
-                            label: Text('${routinesForDate.length} rutinas aplican'),
-                          ),
-                      ],
-                    )
-                  else if (hasScheduledRoutine)
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        Chip(
-                          avatar:
-                              const Icon(Icons.visibility_outlined, size: 18),
-                          label: Text(
-                            hasRoutinePreview
-                                ? (isFuture ? 'Vista previa' : 'Sin registro')
-                                : 'Solo eventos puntuales',
-                          ),
-                        ),
-                        Chip(
-                          avatar:
-                              const Icon(Icons.view_list_rounded, size: 18),
-                          label: Text('${previewAndReminderBlocks.length} bloques'),
-                        ),
-                        if (datedEntries.isNotEmpty)
-                          Chip(
-                            avatar: const Icon(
-                              Icons.event_available_rounded,
-                              size: 18,
-                            ),
-                            label: Text('${datedEntries.length} puntuales'),
-                          ),
-                        if (routinesForDate.length > 1)
-                          Chip(
-                            avatar:
-                                const Icon(Icons.layers_rounded, size: 18),
-                            label: Text('${routinesForDate.length} rutinas aplican'),
-                          ),
-                      ],
-                    )
-                  else
-                    const Chip(
-                      avatar: Icon(Icons.info_outline_rounded, size: 18),
-                      label: Text('Sin plan para este dia'),
-                    ),
-                  const SizedBox(height: 16),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(999),
-                    child: LinearProgressIndicator(
-                      value: progress,
-                      minHeight: 10,
-                      valueColor: AlwaysStoppedAnimation<Color>(progressColor),
-                      backgroundColor: Colors.white12,
-                    ),
-                  ),
-                  if (routinesForDate.isNotEmpty) ...[
-                    const SizedBox(height: 14),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.04),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.06),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Rutinas que aplican en esta fecha',
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            suggestedRoutine == null
-                                ? 'No hay una sugerencia clara para este dia.'
-                                : 'La rutina recomendada para esta fecha es "${suggestedRoutine.name}".',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.white70,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: routinesForDate.take(4).map((routine) {
-                              final isRecommended =
-                                  routine.id == suggestedRoutine?.id;
-                              return Chip(
-                                avatar: Icon(
-                                  isRecommended
-                                      ? Icons.auto_awesome_rounded
-                                      : Icons.event_repeat_rounded,
-                                  size: 18,
-                                ),
-                                label: Text(routine.name),
-                              );
-                            }).toList(),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  if (canManageDatedEntries) ...[
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: FilledButton.tonalIcon(
-                        onPressed: () async {
-                          Navigator.of(context).pop();
-                          await createDatedBlockForDate(date);
-                          if (!mounted) return;
-                          await showCalendarDateDetails(date);
-                        },
-                        icon: const Icon(Icons.event_available_rounded),
-                        label: Text(
-                          isFuture
-                              ? 'Agregar bloque puntual para esta fecha'
-                              : 'Agregar bloque puntual para hoy',
-                        ),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 18),
-                  Expanded(
-                    child: record != null
-                        ? (record.blocks.isEmpty && datedEntries.isEmpty
-                            ? Center(
-                                child: Text(
-                                  'Este dia no tuvo bloques registrados.',
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: Colors.white70,
-                                  ),
-                                ),
-                              )
-                            : ListView(
-                                children: [
-                                  if (record.blocks.isNotEmpty) ...[
-                                    Text(
-                                      'Rutina registrada',
-                                      style: theme.textTheme.titleSmall?.copyWith(
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 10),
-                                    ...record.blocks.map((block) {
-                                      return TimeBlock(
-                                        start: block.start,
-                                        end: block.end,
-                                        title: block.title,
-                                        description: block.description,
-                                        type: block.type,
-                                        countsTowardProgress:
-                                            block.countsTowardProgress,
-                                        receivesPushNotification:
-                                            block.receivesPushNotification,
-                                        isDone: block.isDone,
-                                      );
-                                    }),
-                                  ],
-                                  if (datedEntries.isNotEmpty) ...[
-                                    if (record.blocks.isNotEmpty)
-                                      const SizedBox(height: 14),
-                                    Text(
-                                      'Eventos puntuales',
-                                      style: theme.textTheme.titleSmall?.copyWith(
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    ...datedEntries.map((entry) {
-                                      final block = entry.block;
-
-                                      return Card(
-                                        margin: const EdgeInsets.only(bottom: 12),
-                                        child: ListTile(
-                                          leading: const Icon(
-                                            Icons.event_available_rounded,
-                                          ),
-                                          title: Text(block.title),
-                                          subtitle: Text(
-                                            '${block.start} - ${block.end}${block.description.trim().isEmpty ? '' : ' | ${block.description}'}',
-                                          ),
-                                          trailing: canManageDatedEntries
-                                              ? buildDatedEntryActionsMenu(
-                                                  entry: entry,
-                                                  onOpenDateDetails: () =>
-                                                      showCalendarDateDetails(
-                                                    date,
-                                                  ),
-                                                  closeCurrentSheetFirst: true,
-                                                )
-                                              : null,
-                                        ),
-                                      );
-                                    }),
-                                  ],
-                                ],
-                              ))
-                        : hasScheduledRoutine
-                            ? (previewBlocks.isEmpty && datedEntries.isEmpty
-                                ? Center(
-                                    child: Text(
-                                      'La rutina aplica en esta fecha, pero todavia no tiene bloques.',
-                                      style:
-                                          theme.textTheme.bodyMedium?.copyWith(
-                                        color: Colors.white70,
-                                      ),
-                                    ),
-                                  )
-                                : ListView(
-                                    children: [
-                                      if (previewBlocks.isNotEmpty) ...[
-                                        Text(
-                                          hasRoutinePreview
-                                              ? 'Vista previa de la rutina'
-                                              : 'Plan base',
-                                          style: theme.textTheme.titleSmall?.copyWith(
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 10),
-                                        ...previewBlocks.map((block) {
-                                          return TimeBlock(
-                                            start: block.start,
-                                            end: block.end,
-                                            title: block.title,
-                                            description: block.description,
-                                            type: block.type,
-                                            countsTowardProgress:
-                                                block.countsTowardProgress,
-                                            receivesPushNotification:
-                                                block.receivesPushNotification,
-                                            isDone: false,
-                                          );
-                                        }),
-                                      ],
-                                      if (datedEntries.isNotEmpty) ...[
-                                        if (previewBlocks.isNotEmpty)
-                                          const SizedBox(height: 14),
-                                        Text(
-                                          'Eventos puntuales',
-                                          style: theme.textTheme.titleSmall?.copyWith(
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        ...datedEntries.map((entry) {
-                                          final block = entry.block;
-
-                                          return Card(
-                                            margin: const EdgeInsets.only(
-                                              bottom: 12,
-                                            ),
-                                            child: ListTile(
-                                              leading: const Icon(
-                                                Icons.event_available_rounded,
-                                              ),
-                                              title: Text(block.title),
-                                              subtitle: Text(
-                                                '${block.start} - ${block.end}${block.description.trim().isEmpty ? '' : ' | ${block.description}'}',
-                                              ),
-                                              trailing: canManageDatedEntries
-                                                  ? buildDatedEntryActionsMenu(
-                                                      entry: entry,
-                                                      onOpenDateDetails: () =>
-                                                          showCalendarDateDetails(
-                                                        date,
-                                                      ),
-                                                      closeCurrentSheetFirst: true,
-                                                    )
-                                                  : null,
-                                            ),
-                                          );
-                                        }),
-                                      ],
-                                    ],
-                                  ))
-                            : Center(
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 24),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.event_busy_outlined,
-                                        size: 52,
-                                        color: theme.colorScheme.primary,
-                                      ),
-                                      const SizedBox(height: 14),
-                                      Text(
-                                        'No hay una rutina configurada para esta fecha',
-                                        textAlign: TextAlign.center,
-                                        style:
-                                            theme.textTheme.titleMedium?.copyWith(
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'Puedes crear o editar una rutina con rango de fechas para planificar este dia, o dejar un bloque puntual si solo necesitas algo aislado.',
-                                        textAlign: TextAlign.center,
-                                        style:
-                                            theme.textTheme.bodyMedium?.copyWith(
-                                          color: Colors.white70,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16),
-                                      Wrap(
-                                        spacing: 10,
-                                        runSpacing: 10,
-                                        alignment: WrapAlignment.center,
-                                        children: [
-                                          FilledButton.tonalIcon(
-                                            onPressed: () async {
-                                              Navigator.of(context).pop();
-                                              await showRoutineManagerSheet();
-                                            },
-                                            icon: const Icon(Icons.tune_rounded),
-                                            label: const Text('Gestionar rutinas'),
-                                          ),
-                                          if (canManageDatedEntries)
-                                            OutlinedButton.icon(
-                                              onPressed: () async {
-                                                Navigator.of(context).pop();
-                                                await createDatedBlockForDate(date);
-                                                if (!mounted) return;
-                                                await showCalendarDateDetails(
-                                                  date,
-                                                );
-                                              },
-                                              icon: const Icon(
-                                                Icons.event_available_rounded,
-                                              ),
-                                              label: const Text(
-                                                'Agregar evento puntual',
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                  ),
-                ],
+              child: TodayCalendarDateDetailView(
+                date: date,
+                record: record,
+                recordProgressLabel:
+                    record == null ? null : buildRecordProgressLabel(record),
+                activeRoutine: activeRoutine!,
+                routinesForDate: routinesForDate,
+                suggestedRoutine: suggestedRoutine,
+                hasRoutinePreview: hasRoutinePreview,
+                hasDatedEntries: hasDatedEntries,
+                hasScheduledRoutine: hasScheduledRoutine,
+                isFuture: isFuture,
+                canManageDatedEntries: canManageDatedEntries,
+                recordBlocks: record?.blocks ?? const [],
+                previewBlocks: previewBlocks,
+                datedEntries: datedEntries,
+                completedBlockCount:
+                    recordAndReminderBlocks.where((block) => block.isDone).length,
+                previewBlockCount: previewAndReminderBlocks.length,
+                progress: progress,
+                progressColor: progressColor,
+                scheduledNotificationSourceKeys: scheduledNotificationSourceKeys,
+                onAddDatedBlock: () async {
+                  Navigator.of(context).pop();
+                  await createDatedBlockForDate(date);
+                  if (!mounted) return;
+                  await showCalendarDateDetails(date);
+                },
+                onManageRoutines: () async {
+                  Navigator.of(context).pop();
+                  await showRoutineManagerSheet();
+                },
+                datedEntryActionsBuilder: (entry) => buildDatedEntryActionsMenu(
+                  entry: entry,
+                  onOpenDateDetails: () => showCalendarDateDetails(date),
+                  closeCurrentSheetFirst: true,
+                ),
               ),
             ),
           ),
@@ -3406,6 +3125,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
               recordForDate: getRoutineRecordForDate,
               datedEntriesCountForDate: (day) =>
                   getDatedBlocksForDate(DateKey.fromDate(day)).length,
+              hasPushEnabledDatedEntriesForDate: (day) => getDatedBlocksForDate(
+                DateKey.fromDate(day),
+              ).any((entry) => entry.block.receivesPushNotification),
               hasCompletedDatedEntriesForDate: (day) => getDatedBlocksForDate(
                 DateKey.fromDate(day),
               ).any((entry) => entry.block.isDone),
@@ -3506,6 +3228,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                             label: 'con eventos',
                             value: '${monthSummary.eventDays}',
                           ),
+                          if (monthSummary.pushEventDays > 0)
+                            TodayCalendarSummaryChip(
+                              icon: Icons.notifications_active_outlined,
+                              label: 'con push',
+                              value: '${monthSummary.pushEventDays}',
+                            ),
                           if (monthSummary.multiRoutineDays > 0)
                             TodayCalendarSummaryChip(
                               icon: Icons.layers_rounded,
@@ -3589,6 +3317,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                   ),
                               isCompletedDay: record?.isCompletedDay ?? false,
                               hasDatedEntries: datedEntries.isNotEmpty,
+                              hasPushEnabledDatedEntries: datedEntries.any(
+                                (entry) => entry.block.receivesPushNotification,
+                              ),
                               routineCount: routinesForDate.length,
                               onTap: () => Navigator.of(context).pop(day),
                             );
@@ -3627,6 +3358,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                               color: Color(0xFFFF7A6B),
                             ),
                             label: 'Evento puntual',
+                          ),
+                          TodayCalendarLegendItem(
+                            marker: const Icon(
+                              Icons.notifications_active_rounded,
+                              size: 14,
+                              color: Color(0xFFFFD36C),
+                            ),
+                            label: 'Evento con push',
                           ),
                           TodayCalendarLegendItem(
                             marker: Container(
@@ -4329,6 +4068,22 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 
+  String buildDatedEntryDateLabel(DatedBlockEntry entry) {
+    final date = DateKey.toDate(entry.dateKey);
+    if (TodayCalendarUtils.isSameCalendarDay(date, todayDate)) {
+      return 'Hoy';
+    }
+
+    if (TodayCalendarUtils.isSameCalendarDay(
+      date,
+      todayDate.add(const Duration(days: 1)),
+    )) {
+      return 'Mañana';
+    }
+
+    return DateKey.formatForDisplay(entry.dateKey);
+  }
+
   Widget buildNotificationStatusCard({
     required BuildContext context,
     required int pushEnabledBlocksCount,
@@ -4372,13 +4127,69 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
               ),
               if (notificationDiagnostics.supportsLocalNotifications)
                 Chip(
+                  avatar: Icon(
+                    notificationDiagnostics.notificationsEnabled == false
+                        ? Icons.notifications_off_rounded
+                        : Icons.notifications_rounded,
+                    size: 18,
+                  ),
+                  label: Text(
+                    notificationDiagnostics.notificationsEnabled == false
+                        ? 'Permiso apagado'
+                        : notificationDiagnostics.notificationsEnabled == true
+                            ? 'Permiso activo'
+                            : 'Permiso no confirmado',
+                  ),
+                ),
+              if (notificationDiagnostics.supportsLocalNotifications)
+                Chip(
                   avatar: const Icon(Icons.schedule_send_rounded, size: 18),
                   label: Text(
                     '${notificationDiagnostics.scheduledNotificationsCount} programadas',
                   ),
                 ),
+              if (notificationDiagnostics.supportsLocalNotifications &&
+                  notificationDiagnostics.scheduledDatedNotificationsCount > 0)
+                Chip(
+                  avatar: const Icon(Icons.event_available_rounded, size: 18),
+                  label: Text(
+                    '${notificationDiagnostics.scheduledDatedNotificationsCount} puntuales',
+                  ),
+                ),
             ],
           ),
+          if (notificationDiagnostics.nextScheduledAt != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.05),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.alarm_on_rounded,
+                    color: Color(0xFFFFD36C),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Próximo recordatorio: ${formatNotificationWhen(notificationDiagnostics.nextScheduledAt!)}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
@@ -4483,6 +4294,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   Widget buildUpcomingDatedEventsCard({
     required BuildContext context,
     required List<DatedBlockEntry> entries,
+    required Set<String> scheduledNotificationSourceKeys,
   }) {
     final theme = Theme.of(context);
 
@@ -4554,10 +4366,47 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${isTodayEvent ? 'Hoy' : DateKey.formatForDisplay(entry.dateKey)} | ${entry.block.start} - ${entry.block.end}',
+                          '${isTodayEvent ? 'Hoy' : buildDatedEntryDateLabel(entry)} | ${entry.block.start} - ${entry.block.end}',
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: Colors.white70,
                           ),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            Chip(
+                              visualDensity: VisualDensity.compact,
+                              avatar: const Icon(Icons.event_note_rounded, size: 16),
+                              label: Text(buildDatedEntryDateLabel(entry)),
+                            ),
+                            if (entry.block.receivesPushNotification)
+                              Chip(
+                                visualDensity: VisualDensity.compact,
+                                avatar: Icon(
+                                  scheduledNotificationSourceKeys.contains(
+                                    buildDatedEntryNotificationSourceKey(entry),
+                                  )
+                                      ? Icons.notifications_active_rounded
+                                      : Icons.notifications_paused_rounded,
+                                  size: 16,
+                                ),
+                                label: Text(
+                                  scheduledNotificationSourceKeys.contains(
+                                    buildDatedEntryNotificationSourceKey(entry),
+                                  )
+                                      ? 'Push programado'
+                                      : 'Push pendiente',
+                                ),
+                              ),
+                            if (entry.block.isDone)
+                              const Chip(
+                                visualDensity: VisualDensity.compact,
+                                avatar: Icon(Icons.task_alt_rounded, size: 16),
+                                label: Text('Hecho'),
+                              ),
+                          ],
                         ),
                         if (entry.block.description.trim().isNotEmpty) ...[
                           const SizedBox(height: 4),
@@ -4799,6 +4648,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                     buildUpcomingDatedEventsCard(
                       context: context,
                       entries: upcomingDatedEntries,
+                      scheduledNotificationSourceKeys:
+                          scheduledNotificationSourceKeys,
                     ),
                   ],
                   const SizedBox(height: 16),
@@ -5022,3 +4873,4 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 }
+

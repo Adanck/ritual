@@ -6,12 +6,14 @@ class CalendarMonthSummary {
   final int activityDays;
   final int plannedDays;
   final int eventDays;
+  final int pushEventDays;
   final int multiRoutineDays;
 
   const CalendarMonthSummary({
     required this.activityDays,
     required this.plannedDays,
     required this.eventDays,
+    required this.pushEventDays,
     required this.multiRoutineDays,
   });
 }
@@ -64,6 +66,7 @@ class TodayCalendarUtils {
     required DateTime monthDate,
     required DailyRecord? Function(DateTime day) recordForDate,
     required int Function(DateTime day) datedEntriesCountForDate,
+    required bool Function(DateTime day) hasPushEnabledDatedEntriesForDate,
     required bool Function(DateTime day) hasCompletedDatedEntriesForDate,
     required int Function(DateTime day) routinesApplyingCountForDate,
     required bool Function(DateTime day) activeRoutineAppliesOnDay,
@@ -77,6 +80,7 @@ class TodayCalendarUtils {
     var activityDays = 0;
     var plannedDays = 0;
     var eventDays = 0;
+    var pushEventDays = 0;
     var multiRoutineDays = 0;
 
     for (final day in daysInMonth) {
@@ -92,6 +96,7 @@ class TodayCalendarUtils {
       if (hasActivity) activityDays += 1;
       if (hasScheduledRoutine) plannedDays += 1;
       if (datedEntriesCount > 0) eventDays += 1;
+      if (hasPushEnabledDatedEntriesForDate(day)) pushEventDays += 1;
       if (routinesCount > 1) multiRoutineDays += 1;
     }
 
@@ -99,6 +104,7 @@ class TodayCalendarUtils {
       activityDays: activityDays,
       plannedDays: plannedDays,
       eventDays: eventDays,
+      pushEventDays: pushEventDays,
       multiRoutineDays: multiRoutineDays,
     );
   }

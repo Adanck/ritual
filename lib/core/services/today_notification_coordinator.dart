@@ -20,18 +20,31 @@ class NotificationActionResult {
 /// reagendar recordatorios y construir mensajes de feedback.
 class TodayNotificationCoordinator {
   /// Consulta el estado actual de soporte, permisos y recordatorios futuros.
-  static Future<NotificationDiagnostics> refreshDiagnostics() async {
+  static Future<NotificationDiagnostics> refreshDiagnostics({
+    List<NotificationPreviewEntry>? previewEntries,
+  }) async {
     if (!NotificationService.supportsLocalNotifications) {
       return const NotificationDiagnostics.unsupported();
     }
 
     final enabled = await NotificationService.areNotificationsEnabled();
     final pendingCount = await NotificationService.getPendingNotificationsCount();
+    final scheduledCount = previewEntries?.length ?? pendingCount;
+    final scheduledDatedNotificationsCount =
+        previewEntries
+            ?.where((entry) => entry.sourceKey.startsWith('dated:'))
+            .length ??
+        0;
 
     return NotificationDiagnostics(
       supportsLocalNotifications: true,
       notificationsEnabled: enabled,
-      scheduledNotificationsCount: pendingCount,
+      scheduledNotificationsCount: scheduledCount,
+      scheduledDatedNotificationsCount: scheduledDatedNotificationsCount,
+      nextScheduledAt:
+          previewEntries == null || previewEntries.isEmpty
+              ? null
+              : previewEntries.first.when,
     );
   }
 
@@ -129,6 +142,10 @@ class TodayNotificationCoordinator {
 
     if (diagnostics.scheduledNotificationsCount == 0) {
       return 'Aun no hay recordatorios futuros programados. Revisa si los bloques con push estan en el futuro.';
+    }
+
+    if (diagnostics.nextScheduledAt != null) {
+      return 'Ritual tiene ${diagnostics.scheduledNotificationsCount} recordatorios futuros programados y el siguiente ya quedo calculado.';
     }
 
     return 'Ritual tiene ${diagnostics.scheduledNotificationsCount} recordatorios futuros programados en este dispositivo.';

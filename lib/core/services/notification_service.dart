@@ -165,7 +165,7 @@ class NotificationService {
     if (kIsWeb) return;
 
     final now = (anchorDate ?? DateTime.now()).toLocal();
-    final pendingEntries = _collectEntries(
+    final pendingEntries = buildPreviewEntries(
       routines: routines,
       dailyRecords: dailyRecords,
       datedBlocks: datedBlocks,
@@ -194,8 +194,31 @@ class NotificationService {
     }
   }
 
+  /// Expone la agenda calculada antes de programarla para diagnostico y UI.
+  ///
+  /// Esto nos permite mostrar en la app cual es el proximo recordatorio y si
+  /// un evento puntual concreto quedo cubierto por la agenda local.
+  static List<NotificationPreviewEntry> buildPreviewEntries({
+    required List<Routine> routines,
+    required List<DailyRecord> dailyRecords,
+    required List<DatedBlockEntry> datedBlocks,
+    required String? activeRoutineId,
+    DateTime? anchorDate,
+    int horizonDays = 21,
+  }) {
+    final now = (anchorDate ?? DateTime.now()).toLocal();
+    return _collectEntries(
+      routines: routines,
+      dailyRecords: dailyRecords,
+      datedBlocks: datedBlocks,
+      activeRoutineId: activeRoutineId,
+      anchorDate: now,
+      horizonDays: horizonDays,
+    );
+  }
+
   /// Reune los recordatorios futuros que se deben agendar.
-  static List<_ScheduledNotificationEntry> _collectEntries({
+  static List<NotificationPreviewEntry> _collectEntries({
     required List<Routine> routines,
     required List<DailyRecord> dailyRecords,
     required List<DatedBlockEntry> datedBlocks,
@@ -208,7 +231,7 @@ class NotificationService {
       anchorDate.month,
       anchorDate.day,
     );
-    final scheduledEntries = <_ScheduledNotificationEntry>[];
+    final scheduledEntries = <NotificationPreviewEntry>[];
     final seenKeys = <String>{};
 
     void addEntry({
@@ -223,8 +246,9 @@ class NotificationService {
       if (!seenKeys.add(sourceKey)) return;
 
       scheduledEntries.add(
-        _ScheduledNotificationEntry(
+        NotificationPreviewEntry(
           id: Object.hash(sourceKey, when.millisecondsSinceEpoch) & 0x7fffffff,
+          sourceKey: sourceKey,
           title: title,
           body: body,
           when: when,
@@ -346,15 +370,17 @@ class NotificationService {
 }
 
 /// Representa una notificacion concreta lista para ser agendada.
-class _ScheduledNotificationEntry {
+class NotificationPreviewEntry {
   final int id;
+  final String sourceKey;
   final String title;
   final String body;
   final DateTime when;
   final String payload;
 
-  const _ScheduledNotificationEntry({
+  const NotificationPreviewEntry({
     required this.id,
+    required this.sourceKey,
     required this.title,
     required this.body,
     required this.when,
