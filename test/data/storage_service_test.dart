@@ -62,6 +62,8 @@ void main() {
     expect(loadedRoutines.first.blocks, hasLength(1));
     expect(loadedRoutines.first.blocks.first.title, 'Ingles');
     expect(loadedRoutines.first.blocks.first.description, 'Practica diaria');
+    expect(loadedRoutines.first.blocks.first.startMinutes, 420);
+    expect(loadedRoutines.first.blocks.first.endMinutes, 465);
     expect(loadedRoutines.first.blocks.first.type, BlockType.habit);
     expect(loadedRoutines.first.blocks.first.countsTowardProgress, isFalse);
     expect(
@@ -103,6 +105,8 @@ void main() {
     expect(loadedDailyRecords.first.blocks, hasLength(1));
     expect(loadedDailyRecords.first.blocks.first.id, 'block-1');
     expect(loadedDailyRecords.first.blocks.first.title, 'Ingles');
+    expect(loadedDailyRecords.first.blocks.first.startMinutes, 420);
+    expect(loadedDailyRecords.first.blocks.first.endMinutes, 465);
     expect(
       loadedDailyRecords.first.blocks.first.receivesPushNotification,
       isTrue,
@@ -134,7 +138,47 @@ void main() {
     expect(loadedDatedBlocks.first.dateKey, '2026-04-10');
     expect(loadedDatedBlocks.first.block.id, 'dated-1');
     expect(loadedDatedBlocks.first.block.type, BlockType.event);
+    expect(loadedDatedBlocks.first.block.startMinutes, 960);
+    expect(loadedDatedBlocks.first.block.endMinutes, 990);
     expect(loadedDatedBlocks.first.block.countsTowardProgress, isFalse);
     expect(loadedDatedBlocks.first.block.receivesPushNotification, isTrue);
+  });
+
+  test('loadRoutines supports legacy stored time strings without minute fields', () async {
+    final box = await Hive.openBox(StorageService.boxName);
+
+    await box.put(StorageService.routinesKey, [
+      {
+        'id': 'legacy',
+        'name': 'Legacy',
+        'isActive': true,
+        'schedule': {
+          'type': 'always',
+          'startDateKey': null,
+          'endDateKey': null,
+        },
+        'blocks': [
+          {
+            'id': 'legacy-block',
+            'start': '06:30',
+            'end': '07:15',
+            'title': 'Oracion',
+            'description': '',
+            'type': 'habit',
+            'countsTowardProgress': true,
+            'receivesPushNotification': false,
+            'isDone': false,
+          },
+        ],
+      },
+    ]);
+
+    final loadedRoutines = await StorageService.loadRoutines();
+
+    expect(loadedRoutines, hasLength(1));
+    expect(loadedRoutines.first.blocks.first.startMinutes, 390);
+    expect(loadedRoutines.first.blocks.first.endMinutes, 435);
+    expect(loadedRoutines.first.blocks.first.start, '06:30');
+    expect(loadedRoutines.first.blocks.first.end, '07:15');
   });
 }

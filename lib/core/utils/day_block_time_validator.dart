@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ritual/data/models/day_block.dart';
+import 'package:ritual/data/models/day_time.dart';
 
 /// Reune las reglas de validacion horaria de los bloques del dia.
 ///
@@ -10,33 +11,19 @@ class DayBlockTimeValidator {
 
   /// Convierte un texto `HH:mm` en un [TimeOfDay] cuando el formato es valido.
   static TimeOfDay? parseTime(String value) {
-    final parts = value.split(':');
-    if (parts.length != 2) return null;
-
-    final hour = int.tryParse(parts[0]);
-    final minute = int.tryParse(parts[1]);
-
-    // Regla: la hora debe tener componentes numericos validos.
-    if (hour == null || minute == null) return null;
-
-    // Caso borde: se rechazan horas fuera del rango 00:00 a 23:59.
-    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
-
-    return TimeOfDay(hour: hour, minute: minute);
+    final minutes = DayTimeCodec.parseMinutes(value);
+    if (minutes == null) return null;
+    return TimeOfDay(hour: minutes ~/ 60, minute: minutes % 60);
   }
 
   /// Formatea una hora como `HH:mm` para persistencia y visualizacion.
   static String formatTimeOfDay(TimeOfDay time) {
-    final hour = time.hour.toString().padLeft(2, '0');
-    final minute = time.minute.toString().padLeft(2, '0');
-    return '$hour:$minute';
+    return DayTimeCodec.formatMinutes((time.hour * 60) + time.minute);
   }
 
   /// Convierte una hora a minutos para facilitar comparaciones.
   static int? toMinutes(String value) {
-    final time = parseTime(value);
-    if (time == null) return null;
-    return time.hour * 60 + time.minute;
+    return DayTimeCodec.parseMinutes(value);
   }
 
   /// Determina si el rango horario es estricto: fin debe ser mayor que inicio.
@@ -65,9 +52,8 @@ class DayBlockTimeValidator {
         continue;
       }
 
-      final blockStart = toMinutes(block.start);
-      final blockEnd = toMinutes(block.end);
-      if (blockStart == null || blockEnd == null) continue;
+      final blockStart = block.startMinutes;
+      final blockEnd = block.endMinutes;
 
       // Regla: existe traslape si ambos rangos comparten minutos reales.
       if (startMinutes < blockEnd && endMinutes > blockStart) {

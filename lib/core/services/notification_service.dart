@@ -304,9 +304,8 @@ class NotificationService {
     required DayBlock block,
   }) {
     final date = DateKey.toDate(dateKey);
-    final parts = block.start.split(':');
-    final hour = int.tryParse(parts.first) ?? 0;
-    final minute = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
+    final hour = block.startMinutes ~/ 60;
+    final minute = block.startMinutes % 60;
 
     return DateTime(date.year, date.month, date.day, hour, minute);
   }

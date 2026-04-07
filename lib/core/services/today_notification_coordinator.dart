@@ -1,0 +1,136 @@
+import 'package:ritual/core/models/notification_diagnostics.dart';
+import 'package:ritual/core/services/notification_service.dart';
+import 'package:ritual/data/models/day_block.dart';
+
+/// Resultado de una accion manual de notificaciones disparada desde la UI.
+class NotificationActionResult {
+  final NotificationDiagnostics diagnostics;
+  final String message;
+
+  const NotificationActionResult({
+    required this.diagnostics,
+    required this.message,
+  });
+}
+
+/// Coordina las operaciones de diagnostico y prueba de notificaciones para la
+/// pantalla principal.
+///
+/// La idea es sacar de la UI la secuencia de pedir permisos, refrescar estado,
+/// reagendar recordatorios y construir mensajes de feedback.
+class TodayNotificationCoordinator {
+  /// Consulta el estado actual de soporte, permisos y recordatorios futuros.
+  static Future<NotificationDiagnostics> refreshDiagnostics() async {
+    if (!NotificationService.supportsLocalNotifications) {
+      return const NotificationDiagnostics.unsupported();
+    }
+
+    final enabled = await NotificationService.areNotificationsEnabled();
+    final pendingCount = await NotificationService.getPendingNotificationsCount();
+
+    return NotificationDiagnostics(
+      supportsLocalNotifications: true,
+      notificationsEnabled: enabled,
+      scheduledNotificationsCount: pendingCount,
+    );
+  }
+
+  /// Pide permisos y luego recalcula el diagnostico.
+  static Future<NotificationActionResult> requestPermissions({
+    required Future<void> Function() syncNotifications,
+  }) async {
+    if (!NotificationService.supportsLocalNotifications) {
+      return const NotificationActionResult(
+        diagnostics: NotificationDiagnostics.unsupported(),
+        message:
+            'Esta plataforma no agenda notificaciones locales con la implementacion actual.',
+      );
+    }
+
+    await NotificationService.requestPermissionsIfNeeded();
+    await syncNotifications();
+    final diagnostics = await refreshDiagnostics();
+
+    return NotificationActionResult(
+      diagnostics: diagnostics,
+      message: diagnostics.notificationsEnabled == false
+          ? 'Ritual no pudo confirmar el permiso de notificaciones. Revisa la configuracion del dispositivo.'
+          : 'Permisos de notificacion revisados.',
+    );
+  }
+
+  /// Reagenda manualmente los recordatorios futuros y devuelve el nuevo estado.
+  static Future<NotificationActionResult> resync({
+    required Future<void> Function() syncNotifications,
+  }) async {
+    if (!NotificationService.supportsLocalNotifications) {
+      return const NotificationActionResult(
+        diagnostics: NotificationDiagnostics.unsupported(),
+        message:
+            'Esta plataforma no agenda notificaciones locales con la implementacion actual.',
+      );
+    }
+
+    await syncNotifications();
+    final diagnostics = await refreshDiagnostics();
+
+    return NotificationActionResult(
+      diagnostics: diagnostics,
+      message: diagnostics.scheduledNotificationsCount == 0
+          ? 'No hay recordatorios futuros por programar.'
+          : 'Ritual reagendo ${diagnostics.scheduledNotificationsCount} recordatorios.',
+    );
+  }
+
+  /// Lanza una notificacion inmediata y refresca el diagnostico.
+  static Future<NotificationActionResult> sendTestNotification() async {
+    if (!NotificationService.supportsLocalNotifications) {
+      return const NotificationActionResult(
+        diagnostics: NotificationDiagnostics.unsupported(),
+        message:
+            'Esta plataforma no agenda notificaciones locales con la implementacion actual.',
+      );
+    }
+
+    await NotificationService.showTestNotificationNow();
+    final diagnostics = await refreshDiagnostics();
+
+    return NotificationActionResult(
+      diagnostics: diagnostics,
+      message:
+          'Ritual envio una notificacion de prueba. Revisa el panel del dispositivo.',
+    );
+  }
+
+  /// Cuando un bloque activa push, intenta dejar listo el permiso y la agenda.
+  static Future<NotificationDiagnostics> prepareForBlockIfNeeded({
+    required DayBlock block,
+    required Future<void> Function() syncNotifications,
+  }) async {
+    if (!block.receivesPushNotification ||
+        !NotificationService.supportsLocalNotifications) {
+      return refreshDiagnostics();
+    }
+
+    await NotificationService.requestPermissionsIfNeeded();
+    await syncNotifications();
+    return refreshDiagnostics();
+  }
+
+  /// Texto listo para UI con el estado resumido de las notificaciones.
+  static String buildStatusDescription(NotificationDiagnostics diagnostics) {
+    if (!diagnostics.supportsLocalNotifications) {
+      return 'Esta plataforma web conserva la preferencia, pero no agenda recordatorios locales.';
+    }
+
+    if (diagnostics.notificationsEnabled == false) {
+      return 'Los recordatorios existen, pero el dispositivo parece tener las notificaciones desactivadas.';
+    }
+
+    if (diagnostics.scheduledNotificationsCount == 0) {
+      return 'Aun no hay recordatorios futuros programados. Revisa si los bloques con push estan en el futuro.';
+    }
+
+    return 'Ritual tiene ${diagnostics.scheduledNotificationsCount} recordatorios futuros programados en este dispositivo.';
+  }
+}

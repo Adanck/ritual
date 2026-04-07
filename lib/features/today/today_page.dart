@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:ritual/core/models/notification_diagnostics.dart';
 import 'package:ritual/core/services/notification_service.dart';
+import 'package:ritual/core/services/today_notification_coordinator.dart';
+import 'package:ritual/core/utils/day_block_collection_utils.dart';
 import 'package:ritual/core/utils/date_key.dart';
 import 'package:ritual/core/utils/day_block_time_validator.dart';
 import 'package:ritual/core/utils/routine_history_insights.dart';
+import 'package:ritual/core/utils/today_calendar_utils.dart';
+import 'package:ritual/core/utils/today_routine_utils.dart';
 import 'package:ritual/data/models/block_type.dart';
 import 'package:ritual/data/models/dated_block_entry.dart';
 import 'package:ritual/data/models/daily_record.dart';
@@ -10,6 +15,7 @@ import 'package:ritual/data/models/day_block.dart';
 import 'package:ritual/data/models/routine.dart';
 import 'package:ritual/data/models/routine_schedule.dart';
 import 'package:ritual/data/services/storage_service.dart';
+import 'package:ritual/shared/widgets/today_calendar_widgets.dart';
 import 'package:ritual/shared/widgets/time_block.dart';
 
 /// Resultado del formulario de rutina.
@@ -23,24 +29,6 @@ class _RoutineFormResult {
   const _RoutineFormResult({
     required this.name,
     required this.schedule,
-  });
-}
-
-/// Representa un aviso contextual sobre la vigencia de las rutinas.
-///
-/// Lo usamos para traducir reglas de calendario a mensajes concretos dentro
-/// de la pantalla principal sin mezclar la UI con la logica de fechas.
-class _RoutineNotice {
-  final IconData icon;
-  final Color color;
-  final String title;
-  final String description;
-
-  const _RoutineNotice({
-    required this.icon,
-    required this.color,
-    required this.title,
-    required this.description,
   });
 }
 
@@ -85,8 +73,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   List<DailyRecord> dailyRecords = [];
   List<DatedBlockEntry> datedBlocks = [];
   Routine? activeRoutine;
-  bool? notificationsEnabled;
-  int scheduledNotificationsCount = 0;
+  NotificationDiagnostics notificationDiagnostics =
+      const NotificationDiagnostics.unsupported();
   bool isNotificationActionInProgress = false;
 
   static const List<DropdownMenuItem<BlockType>> _blockTypeOptions = [
@@ -164,9 +152,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final baseBlocks = activeDayRecord?.blocks ?? activeRoutine!.blocks;
     final reminderBlocks = getDatedBlocksForDate(todayKey).map((entry) => entry.block);
 
-    return sortBlocksChronologically([
-      ...baseBlocks.map(cloneBlockForDailyRecord),
-      ...reminderBlocks.map(cloneBlockForDailyRecord),
+    return DayBlockCollectionUtils.sortChronologically([
+      ...baseBlocks.map(DayBlockCollectionUtils.cloneForDailyRecord),
+      ...reminderBlocks.map(DayBlockCollectionUtils.cloneForDailyRecord),
     ]);
   }
 
@@ -230,31 +218,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     int daysAhead = 14,
     int limit = 4,
   }) {
-    final today = DateTime(todayDate.year, todayDate.month, todayDate.day);
-    final lastDate = today.add(Duration(days: daysAhead));
-    final sortedEntries = [...datedBlocks]
-      ..sort((a, b) {
-        final aDateTime = DateKey.toDate(a.dateKey);
-        final bDateTime = DateKey.toDate(b.dateKey);
-        final dateComparison = aDateTime.compareTo(bDateTime);
-        if (dateComparison != 0) return dateComparison;
-
-        final aTime = DayBlockTimeValidator.parseTime(a.block.start);
-        final bTime = DayBlockTimeValidator.parseTime(b.block.start);
-        final aMinutes =
-            aTime == null ? 0 : (aTime.hour * 60) + aTime.minute;
-        final bMinutes =
-            bTime == null ? 0 : (bTime.hour * 60) + bTime.minute;
-        return aMinutes.compareTo(bMinutes);
-      });
-
-    return sortedEntries
-        .where((entry) {
-          final entryDate = DateKey.toDate(entry.dateKey);
-          return !entryDate.isBefore(today) && !entryDate.isAfter(lastDate);
-        })
-        .take(limit)
-        .toList();
+    return DayBlockCollectionUtils.getUpcomingDatedBlocks(
+      datedBlocks: datedBlocks,
+      todayDate: todayDate,
+      daysAhead: daysAhead,
+      limit: limit,
+    );
   }
 
   DatedBlockEntry? getDatedBlockEntryById(String blockId) {
@@ -268,25 +237,6 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     return getDatedBlockEntryById(block.id) != null;
   }
 
-  String buildBlockSignature(DayBlock block) {
-    return '${block.start}|${block.end}|${block.title.trim().toLowerCase()}';
-  }
-
-  /// Compara dos bloques por su definicion funcional, no por referencia.
-  ///
-  /// Regla: esto nos ayuda a saber si el plan de hoy ya fue modificado frente
-  /// a la plantilla original aunque todavia no existan checks completados.
-  bool isSameBlockDefinition(DayBlock a, DayBlock b) {
-    return a.id == b.id &&
-        a.start == b.start &&
-        a.end == b.end &&
-        a.title == b.title &&
-        a.description == b.description &&
-        a.type == b.type &&
-        a.countsTowardProgress == b.countsTowardProgress &&
-        a.receivesPushNotification == b.receivesPushNotification;
-  }
-
   /// Detecta si el registro de hoy ya se desvio de la plantilla base.
   ///
   /// Caso borde: aunque no haya checks, si el usuario agrego, quito o edito
@@ -298,7 +248,10 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (record.blocks.length != routine.blocks.length) return true;
 
     for (var index = 0; index < record.blocks.length; index++) {
-      if (!isSameBlockDefinition(record.blocks[index], routine.blocks[index])) {
+      if (!DayBlockCollectionUtils.hasSameDefinition(
+        record.blocks[index],
+        routine.blocks[index],
+      )) {
         return true;
       }
     }
@@ -306,54 +259,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     return false;
   }
 
-  int getRoutineSuggestionWeight(Routine routine) {
-    switch (routine.schedule.type) {
-      case RoutineScheduleType.customRange:
-        return 4;
-      case RoutineScheduleType.currentWeek:
-        return 3;
-      case RoutineScheduleType.currentMonth:
-        return 2;
-      case RoutineScheduleType.always:
-        return 1;
-    }
-  }
-
-  DateTime? getRoutineSuggestionStartDate(Routine routine) {
-    final startDateKey = routine.schedule.startDateKey;
-    if (startDateKey == null || startDateKey.isEmpty) return null;
-    return DateKey.toDate(startDateKey);
-  }
-
-  int compareRoutinesForTodaySuggestion(Routine a, Routine b) {
-    final weightComparison =
-        getRoutineSuggestionWeight(b).compareTo(getRoutineSuggestionWeight(a));
-    if (weightComparison != 0) return weightComparison;
-
-    final aStart = getRoutineSuggestionStartDate(a);
-    final bStart = getRoutineSuggestionStartDate(b);
-    if (aStart != null && bStart != null) {
-      final startComparison = bStart.compareTo(aStart);
-      if (startComparison != 0) return startComparison;
-    } else if (aStart == null && bStart != null) {
-      return 1;
-    } else if (aStart != null && bStart == null) {
-      return -1;
-    }
-
-    final blockCountComparison = b.blocks.length.compareTo(a.blocks.length);
-    if (blockCountComparison != 0) return blockCountComparison;
-
-    return a.name.compareTo(b.name);
-  }
-
   List<Routine> get routinesSuggestedForToday {
-    final suggestedRoutines = routines
-        .where((routine) => routine.appliesOn(todayDate))
-        .toList()
-      ..sort(compareRoutinesForTodaySuggestion);
-
-    return suggestedRoutines;
+    return TodayRoutineUtils.getSuggestedForDate(
+      routines: routines,
+      date: todayDate,
+    );
   }
 
   Routine? get suggestedRoutineForToday {
@@ -404,22 +314,6 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     return record.blocks.indexWhere((block) => block.id == blockId);
   }
 
-  List<DayBlock> sortBlocksChronologically(List<DayBlock> blocks) {
-    final sortedBlocks = [...blocks];
-
-    sortedBlocks.sort((a, b) {
-      final aTime = DayBlockTimeValidator.parseTime(a.start);
-      final bTime = DayBlockTimeValidator.parseTime(b.start);
-
-      final aMinutes = aTime == null ? 0 : (aTime.hour * 60) + aTime.minute;
-      final bMinutes = bTime == null ? 0 : (bTime.hour * 60) + bTime.minute;
-
-      return aMinutes.compareTo(bMinutes);
-    });
-
-    return sortedBlocks;
-  }
-
   /// Construye el horario esperado para una fecha concreta.
   ///
   /// Regla: si ya existe un registro real para esa fecha, ese registro manda.
@@ -433,13 +327,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final record = getRoutineRecordForDate(date);
     final shouldUseTemplate =
         record == null &&
-        (isSameCalendarDay(date, todayDate) || activeRoutine!.appliesOn(date));
+        (TodayCalendarUtils.isSameCalendarDay(date, todayDate) ||
+            activeRoutine!.appliesOn(date));
     final routineBlocks = record?.blocks ?? (shouldUseTemplate ? activeRoutine!.blocks : <DayBlock>[]);
     final reminderBlocks = getDatedBlocksForDate(dateKey).map((entry) => entry.block);
 
-    return sortBlocksChronologically([
-      ...routineBlocks.map(cloneBlockForDailyRecord),
-      ...reminderBlocks.map(cloneBlockForDailyRecord),
+    return DayBlockCollectionUtils.sortChronologically([
+      ...routineBlocks.map(DayBlockCollectionUtils.cloneForDailyRecord),
+      ...reminderBlocks.map(DayBlockCollectionUtils.cloneForDailyRecord),
     ]);
   }
 
@@ -498,19 +393,22 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     required _RoutineSwitchStrategy strategy,
   }) {
     final currentBlocksBySignature = {
-      for (final block in currentDayBlocks) buildBlockSignature(block): block,
+      for (final block in currentDayBlocks)
+        DayBlockCollectionUtils.buildSignature(block): block,
     };
     final completedCurrentBlocks = currentDayBlocks
         .where((block) => block.isDone)
-        .map(cloneBlockForDailyRecord)
+        .map(DayBlockCollectionUtils.cloneForDailyRecord)
         .toList();
 
     switch (strategy) {
       case _RoutineSwitchStrategy.preserveAndAdd:
-        final mergedBlocks = currentDayBlocks.map(cloneBlockForDailyRecord).toList();
+        final mergedBlocks = currentDayBlocks
+            .map(DayBlockCollectionUtils.cloneForDailyRecord)
+            .toList();
 
         for (final templateBlock in nextRoutineBlocks) {
-          final signature = buildBlockSignature(templateBlock);
+          final signature = DayBlockCollectionUtils.buildSignature(templateBlock);
 
           // Caso borde: si ambas rutinas comparten un bloque equivalente,
           // preservamos el bloque ya existente para no duplicarlo.
@@ -519,37 +417,49 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           }
 
           mergedBlocks.add(
-            cloneBlockForDailyRecord(templateBlock, isDone: false),
+            DayBlockCollectionUtils.cloneForDailyRecord(
+              templateBlock,
+              isDone: false,
+            ),
           );
         }
 
-        return sortBlocksChronologically(mergedBlocks);
+        return DayBlockCollectionUtils.sortChronologically(mergedBlocks);
       case _RoutineSwitchStrategy.replacePending:
         final keptSignatures = {
-          for (final block in completedCurrentBlocks) buildBlockSignature(block),
+          for (final block in completedCurrentBlocks)
+            DayBlockCollectionUtils.buildSignature(block),
         };
         final rebuiltBlocks = [...completedCurrentBlocks];
 
         // Regla: al reemplazar solo el resto del dia conservamos lo ya marcado
         // y regeneramos lo pendiente desde la nueva rutina.
         for (final templateBlock in nextRoutineBlocks) {
-          final signature = buildBlockSignature(templateBlock);
+          final signature = DayBlockCollectionUtils.buildSignature(templateBlock);
           if (keptSignatures.contains(signature)) {
             continue;
           }
 
           rebuiltBlocks.add(
-            cloneBlockForDailyRecord(templateBlock, isDone: false),
+            DayBlockCollectionUtils.cloneForDailyRecord(
+              templateBlock,
+              isDone: false,
+            ),
           );
         }
 
-        return sortBlocksChronologically(rebuiltBlocks);
+        return DayBlockCollectionUtils.sortChronologically(rebuiltBlocks);
       case _RoutineSwitchStrategy.restartDay:
         // Regla: un reinicio total ignora el progreso previo y crea un nuevo
         // dia desde la plantilla de la rutina seleccionada.
-        return sortBlocksChronologically(
+        return DayBlockCollectionUtils.sortChronologically(
           nextRoutineBlocks
-              .map((block) => cloneBlockForDailyRecord(block, isDone: false))
+              .map(
+                (block) => DayBlockCollectionUtils.cloneForDailyRecord(
+                  block,
+                  isDone: false,
+                ),
+              )
               .toList(),
         );
     }
@@ -669,31 +579,6 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     setState(() {});
   }
 
-  /// Crea una copia del bloque de plantilla para usarlo dentro del historial.
-  DayBlock cloneBlockForDailyRecord(DayBlock block, {bool? isDone}) {
-    return block.copyWith(isDone: isDone ?? block.isDone);
-  }
-
-  /// Sincroniza los bloques del registro diario con la plantilla actual.
-  ///
-  /// Regla: preservamos `isDone` por `id` para no perder el progreso del dia
-  /// cuando el usuario reordena o edita la estructura de la rutina.
-  List<DayBlock> syncTodayBlocksWithTemplate({
-    required List<DayBlock> templateBlocks,
-    required List<DayBlock> currentDayBlocks,
-  }) {
-    final completedStateById = {
-      for (final block in currentDayBlocks) block.id: block.isDone,
-    };
-
-    return templateBlocks.map((templateBlock) {
-      return cloneBlockForDailyRecord(
-        templateBlock,
-        isDone: completedStateById[templateBlock.id] ?? false,
-      );
-    }).toList();
-  }
-
   /// Garantiza que exista un registro para la rutina activa en la fecha actual.
   ///
   /// Esta es la base del reset diario automatico: cuando cambia el dia y no
@@ -717,7 +602,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           routineId: activeRoutine!.id,
           routineName: activeRoutine!.name,
           blocks: activeRoutine!.blocks
-              .map((block) => cloneBlockForDailyRecord(block, isDone: false))
+              .map(
+                (block) => DayBlockCollectionUtils.cloneForDailyRecord(
+                  block,
+                  isDone: false,
+                ),
+              )
               .toList(),
         ),
       ];
@@ -734,7 +624,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       record.blocks
         ..clear()
         ..addAll(
-          syncTodayBlocksWithTemplate(
+          DayBlockCollectionUtils.syncWithTemplate(
             templateBlocks: activeRoutine!.blocks,
             currentDayBlocks: previousBlocks,
           ),
@@ -804,26 +694,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// Lee el estado actual de permisos y cantidad de recordatorios agendados.
   ///
   /// Regla: este diagnostico no bloquea la app. Si la plataforma no expone
-  /// permisos detallados, dejamos `notificationsEnabled` en `null` y solo
-  /// mostramos la cantidad programada.
+  /// permisos detallados, el coordinador devuelve un estado neutro y la UI
+  /// muestra solo la informacion que realmente conoce.
   Future<void> refreshNotificationDiagnostics() async {
-    if (!NotificationService.supportsLocalNotifications) {
-      if (!mounted) return;
-
-      setState(() {
-        notificationsEnabled = false;
-        scheduledNotificationsCount = 0;
-      });
-      return;
-    }
-
-    final enabled = await NotificationService.areNotificationsEnabled();
-    final pendingCount = await NotificationService.getPendingNotificationsCount();
+    final diagnostics = await TodayNotificationCoordinator.refreshDiagnostics();
 
     if (!mounted) return;
     setState(() {
-      notificationsEnabled = enabled;
-      scheduledNotificationsCount = pendingCount;
+      notificationDiagnostics = diagnostics;
     });
   }
 
@@ -835,22 +713,19 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       isNotificationActionInProgress = true;
     });
 
-    await NotificationService.requestPermissionsIfNeeded();
-    await syncNotificationsWithStoredState();
+    final result = await TodayNotificationCoordinator.requestPermissions(
+      syncNotifications: syncNotificationsWithStoredState,
+    );
 
     if (!mounted) return;
     setState(() {
+      notificationDiagnostics = result.diagnostics;
       isNotificationActionInProgress = false;
     });
 
-    final enabled = notificationsEnabled;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          enabled == false
-              ? 'Ritual no pudo confirmar el permiso de notificaciones. Revisa la configuracion del dispositivo.'
-              : 'Permisos de notificacion revisados.',
-        ),
+        content: Text(result.message),
       ),
     );
   }
@@ -863,21 +738,18 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       isNotificationActionInProgress = true;
     });
 
-    await syncNotificationsWithStoredState();
+    final result = await TodayNotificationCoordinator.resync(
+      syncNotifications: syncNotificationsWithStoredState,
+    );
 
     if (!mounted) return;
     setState(() {
+      notificationDiagnostics = result.diagnostics;
       isNotificationActionInProgress = false;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          scheduledNotificationsCount == 0
-              ? 'No hay recordatorios futuros por programar.'
-              : 'Ritual reagendo $scheduledNotificationsCount recordatorios.',
-        ),
-      ),
+      SnackBar(content: Text(result.message)),
     );
   }
 
@@ -889,33 +761,31 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       isNotificationActionInProgress = true;
     });
 
-    await NotificationService.showTestNotificationNow();
-    await refreshNotificationDiagnostics();
+    final result = await TodayNotificationCoordinator.sendTestNotification();
 
     if (!mounted) return;
     setState(() {
+      notificationDiagnostics = result.diagnostics;
       isNotificationActionInProgress = false;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Ritual envio una notificacion de prueba. Revisa el panel del dispositivo.',
-        ),
-      ),
+      SnackBar(content: Text(result.message)),
     );
   }
 
   /// Cuando un bloque activa push, intentamos dejar listo el permiso y la
   /// agenda para que la experiencia sea mas confiable desde el primer uso.
   Future<void> prepareNotificationsForBlockIfNeeded(DayBlock block) async {
-    if (!block.receivesPushNotification ||
-        !NotificationService.supportsLocalNotifications) {
-      return;
-    }
+    final diagnostics = await TodayNotificationCoordinator.prepareForBlockIfNeeded(
+      block: block,
+      syncNotifications: syncNotificationsWithStoredState,
+    );
 
-    await NotificationService.requestPermissionsIfNeeded();
-    await syncNotificationsWithStoredState();
+    if (!mounted) return;
+    setState(() {
+      notificationDiagnostics = diagnostics;
+    });
   }
 
   /// Marca o desmarca un bloque del registro diario activo y persiste el cambio.
@@ -2221,7 +2091,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       );
       if (!shouldSave) return;
 
-      final sortedBlocks = sortBlocksChronologically([
+      final sortedBlocks = DayBlockCollectionUtils.sortChronologically([
         ...record.blocks,
         createdBlock,
       ]);
@@ -2244,7 +2114,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
     if (!shouldSave) return;
 
-    final sortedRoutineBlocks = sortBlocksChronologically([
+    final sortedRoutineBlocks = DayBlockCollectionUtils.sortChronologically([
       ...activeRoutine!.blocks,
       createdBlock,
     ]);
@@ -2276,7 +2146,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       candidateBlock: createdBlock,
       comparisonBlocks: getPlannedBlocksForDate(date),
       scopeLabel:
-          isSameCalendarDay(date, todayDate) ? 'el horario de hoy' : 'esa fecha',
+          TodayCalendarUtils.isSameCalendarDay(date, todayDate)
+              ? 'el horario de hoy'
+              : 'esa fecha',
     );
     if (!shouldSave) return;
 
@@ -2293,7 +2165,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         block: datedBlock,
       ),
     ];
-    final sortedEntries = sortBlocksChronologically(
+    final sortedEntries = DayBlockCollectionUtils.sortChronologically(
       updatedEntries.map((entry) => entry.block).toList(),
     );
 
@@ -2324,7 +2196,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       comparisonBlocks: getPlannedBlocksForDate(entryDate),
       blockBeingEdited: entry.block,
       scopeLabel:
-          isSameCalendarDay(entryDate, todayDate) ? 'el horario de hoy' : 'esa fecha',
+          TodayCalendarUtils.isSameCalendarDay(entryDate, todayDate)
+              ? 'el horario de hoy'
+              : 'esa fecha',
     );
     if (!shouldSave) return;
 
@@ -2332,7 +2206,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         .map((datedEntry) =>
             datedEntry.block.id == entry.block.id ? updatedBlock : datedEntry.block)
         .toList();
-    final sortedBlocks = sortBlocksChronologically(updatedEntries);
+    final sortedBlocks = DayBlockCollectionUtils.sortChronologically(
+      updatedEntries,
+    );
 
     setState(() {
       datedBlocks.removeWhere((datedEntry) => datedEntry.dateKey == entry.dateKey);
@@ -2348,6 +2224,112 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     await saveDatedBlocksAndRefresh();
     await prepareNotificationsForBlockIfNeeded(updatedBlock);
+  }
+
+  /// Mueve un evento puntual a otra fecha sin convertirlo en parte de la
+  /// rutina base.
+  Future<void> moveDatedBlockEntryToAnotherDate(DatedBlockEntry entry) async {
+    final targetDateKey = await pickDateKey(
+      context: context,
+      initialDateKey: entry.dateKey,
+    );
+    if (targetDateKey == null) return;
+
+    final targetDate = DateKey.toDate(targetDateKey);
+    final shouldSave = await confirmOverlapIfNeeded(
+      candidateBlock: entry.block.copyWith(isDone: false),
+      comparisonBlocks: getPlannedBlocksForDate(targetDate),
+      blockBeingEdited: targetDateKey == entry.dateKey ? entry.block : null,
+      scopeLabel:
+          TodayCalendarUtils.isSameCalendarDay(targetDate, todayDate)
+              ? 'el horario de hoy'
+              : 'esa fecha',
+    );
+    if (!shouldSave) return;
+
+    final movedBlock = entry.block.copyWith(
+      isDone: targetDateKey == entry.dateKey ? entry.block.isDone : false,
+    );
+
+    final targetBlocks = [
+      ...getDatedBlocksForDate(targetDateKey).map((datedEntry) => datedEntry.block),
+      if (targetDateKey != entry.dateKey) movedBlock,
+    ];
+
+    final sortedTargetBlocks = DayBlockCollectionUtils.sortChronologically(
+      targetDateKey == entry.dateKey
+          ? getDatedBlocksForDate(targetDateKey)
+              .map((datedEntry) =>
+                  datedEntry.block.id == entry.block.id ? movedBlock : datedEntry.block)
+              .toList()
+          : targetBlocks,
+    );
+
+    setState(() {
+      datedBlocks.remove(entry);
+      datedBlocks.removeWhere((datedEntry) => datedEntry.dateKey == targetDateKey);
+      datedBlocks.addAll(
+        sortedTargetBlocks.map(
+          (block) => DatedBlockEntry(
+            dateKey: targetDateKey,
+            block: block,
+          ),
+        ),
+      );
+    });
+
+    await saveDatedBlocksAndRefresh();
+    await prepareNotificationsForBlockIfNeeded(movedBlock);
+  }
+
+  /// Duplica un evento puntual para otra fecha sin perder el original.
+  Future<void> duplicateDatedBlockEntryToAnotherDate(DatedBlockEntry entry) async {
+    final targetDateKey = await pickDateKey(
+      context: context,
+      initialDateKey: entry.dateKey,
+    );
+    if (targetDateKey == null) return;
+
+    final duplicatedBlock = entry.block.copyWith(
+      id: 'dated-copy-${DateTime.now().microsecondsSinceEpoch}',
+      isDone: false,
+    );
+    final targetDate = DateKey.toDate(targetDateKey);
+    final shouldSave = await confirmOverlapIfNeeded(
+      candidateBlock: duplicatedBlock,
+      comparisonBlocks: getPlannedBlocksForDate(targetDate),
+      scopeLabel:
+          TodayCalendarUtils.isSameCalendarDay(targetDate, todayDate)
+              ? 'el horario de hoy'
+              : 'esa fecha',
+    );
+    if (!shouldSave) return;
+
+    final updatedEntries = [
+      ...getDatedBlocksForDate(targetDateKey),
+      DatedBlockEntry(
+        dateKey: targetDateKey,
+        block: duplicatedBlock,
+      ),
+    ];
+    final sortedBlocks = DayBlockCollectionUtils.sortChronologically(
+      updatedEntries.map((datedEntry) => datedEntry.block).toList(),
+    );
+
+    setState(() {
+      datedBlocks.removeWhere((datedEntry) => datedEntry.dateKey == targetDateKey);
+      datedBlocks.addAll(
+        sortedBlocks.map(
+          (block) => DatedBlockEntry(
+            dateKey: targetDateKey,
+            block: block,
+          ),
+        ),
+      );
+    });
+
+    await saveDatedBlocksAndRefresh();
+    await prepareNotificationsForBlockIfNeeded(duplicatedBlock);
   }
 
   /// Elimina un evento puntual sin tocar la rutina base ni el resto del dia.
@@ -2401,7 +2383,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           DateKey.toDate(reminderEntry.dateKey),
         ),
         blockBeingEdited: reminderEntry.block,
-        scopeLabel: isSameCalendarDay(
+        scopeLabel: TodayCalendarUtils.isSameCalendarDay(
           DateKey.toDate(reminderEntry.dateKey),
           todayDate,
         )
@@ -2416,7 +2398,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
               ? updatedBlock
               : entry.block)
           .toList();
-      final sortedBlocks = sortBlocksChronologically(updatedEntries);
+      final sortedBlocks = DayBlockCollectionUtils.sortChronologically(
+        updatedEntries,
+      );
 
       setState(() {
         datedBlocks.removeWhere((entry) => entry.dateKey == reminderDateKey);
@@ -2468,7 +2452,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
       final updatedBlocks = [...record.blocks];
       updatedBlocks[recordIndex] = updatedBlock;
-      final sortedBlocks = sortBlocksChronologically(updatedBlocks);
+      final sortedBlocks = DayBlockCollectionUtils.sortChronologically(
+        updatedBlocks,
+      );
 
       setState(() {
         record.blocks
@@ -2493,7 +2479,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     final updatedRoutineBlocks = [...activeRoutine!.blocks];
     updatedRoutineBlocks[routineIndex] = updatedBlock.copyWith(isDone: false);
-    final sortedRoutineBlocks = sortBlocksChronologically(updatedRoutineBlocks);
+    final sortedRoutineBlocks = DayBlockCollectionUtils.sortChronologically(
+      updatedRoutineBlocks,
+    );
 
     setState(() {
       activeRoutine!.blocks
@@ -2883,29 +2871,6 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     }
   }
 
-  DateTime get calendarMonthAnchor {
-    final now = todayDate;
-    return DateTime(now.year, now.month);
-  }
-
-  DateTime getCalendarMonthStart(DateTime monthDate) {
-    return DateTime(monthDate.year, monthDate.month);
-  }
-
-  DateTime getCalendarGridStart(DateTime monthDate) {
-    final monthStart = getCalendarMonthStart(monthDate);
-    return monthStart.subtract(Duration(days: monthStart.weekday - 1));
-  }
-
-  List<DateTime> buildCalendarGridDays(DateTime monthDate) {
-    final gridStart = getCalendarGridStart(monthDate);
-
-    return List.generate(
-      42,
-      (index) => gridStart.add(Duration(days: index)),
-    );
-  }
-
   DailyRecord? getRoutineRecordForDate(DateTime date) {
     if (activeRoutine == null) return null;
 
@@ -2923,251 +2888,6 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     return sortRoutinesForManagement(routinesForDate);
   }
 
-  bool isSameCalendarDay(DateTime a, DateTime b) {
-    return a.year == b.year && a.month == b.month && a.day == b.day;
-  }
-
-  bool isFutureCalendarDay(DateTime date) {
-    final normalized = DateTime(date.year, date.month, date.day);
-    final today = DateTime(todayDate.year, todayDate.month, todayDate.day);
-    return normalized.isAfter(today);
-  }
-
-  Color getCalendarPreviewColor({required bool hasScheduledRoutine}) {
-    return hasScheduledRoutine ? const Color(0xFF4DA3FF) : Colors.white54;
-  }
-
-  ({
-    int activityDays,
-    int plannedDays,
-    int eventDays,
-    int multiRoutineDays,
-  }) getCalendarMonthSummary(DateTime monthDate) {
-    final monthEnd = DateTime(monthDate.year, monthDate.month + 1, 0);
-
-    final daysInMonth = List.generate(
-      monthEnd.day,
-      (index) => DateTime(monthDate.year, monthDate.month, index + 1),
-    );
-
-    var activityDays = 0;
-    var plannedDays = 0;
-    var eventDays = 0;
-    var multiRoutineDays = 0;
-
-    for (final day in daysInMonth) {
-      final record = getRoutineRecordForDate(day);
-      final datedEntries = getDatedBlocksForDate(DateKey.fromDate(day));
-      final routinesForDate = getRoutinesApplyingOnDate(day);
-      final hasScheduledRoutine =
-          (activeRoutine?.appliesOn(day) ?? false) || datedEntries.isNotEmpty;
-      final hasActivity =
-          (record?.hasAnyCompletedBlocks ?? false) ||
-          datedEntries.any((entry) => entry.block.isDone);
-
-      if (hasActivity) activityDays += 1;
-      if (hasScheduledRoutine) plannedDays += 1;
-      if (datedEntries.isNotEmpty) eventDays += 1;
-      if (routinesForDate.length > 1) multiRoutineDays += 1;
-    }
-
-    return (
-      activityDays: activityDays,
-      plannedDays: plannedDays,
-      eventDays: eventDays,
-      multiRoutineDays: multiRoutineDays,
-    );
-  }
-
-  Widget buildCalendarLegendItem({
-    required BuildContext context,
-    required Widget marker,
-    required String label,
-  }) {
-    final theme = Theme.of(context);
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        marker,
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: Colors.white70,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget buildCalendarWeekdayCell({
-    required BuildContext context,
-    required String label,
-  }) {
-    final theme = Theme.of(context);
-
-    return Center(
-      child: Text(
-        label,
-        style: theme.textTheme.labelMedium?.copyWith(
-          color: Colors.white60,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
-  Widget buildCalendarSummaryChip({
-    required BuildContext context,
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: theme.colorScheme.primary),
-          const SizedBox(width: 8),
-          Text(
-            '$value $label',
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget buildCalendarDayTile({
-    required BuildContext context,
-    required DateTime day,
-    required DateTime visibleMonth,
-  }) {
-    final theme = Theme.of(context);
-    final record = getRoutineRecordForDate(day);
-    final datedEntries = getDatedBlocksForDate(DateKey.fromDate(day));
-    final routinesForDate = getRoutinesApplyingOnDate(day);
-    final isInVisibleMonth = day.month == visibleMonth.month;
-    final isToday = isSameCalendarDay(day, todayDate);
-    final isFuture = isFutureCalendarDay(day);
-    final hasScheduledRoutine =
-        (activeRoutine?.appliesOn(day) ?? false) || datedEntries.isNotEmpty;
-    final hasActivity =
-        (record?.hasAnyCompletedBlocks ?? false) ||
-        datedEntries.any((entry) => entry.block.isDone);
-    final isCompletedDay = record?.isCompletedDay ?? false;
-    final markerColor =
-        isCompletedDay ? const Color(0xFFFFA24D) : const Color(0xFF4DA3FF);
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: () => Navigator.of(context).pop(day),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-        decoration: BoxDecoration(
-          color: hasActivity
-              ? markerColor.withValues(alpha: 0.12)
-              : routinesForDate.length > 1
-                  ? const Color(0xFF4DA3FF).withValues(alpha: 0.08)
-              : Colors.white.withValues(alpha: 0.02),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: isToday
-                ? theme.colorScheme.primary.withValues(alpha: 0.5)
-                : hasScheduledRoutine && isFuture
-                    ? Colors.white.withValues(alpha: 0.10)
-                    : Colors.white.withValues(alpha: 0.04),
-          ),
-        ),
-        child: Stack(
-          children: [
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    day.day.toString(),
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      color: isInVisibleMonth ? null : Colors.white38,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (hasActivity)
-                        Icon(
-                          Icons.local_fire_department_rounded,
-                          size: 16,
-                          color: markerColor,
-                        )
-                      else if (hasScheduledRoutine && isFuture)
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.primary
-                                .withValues(alpha: 0.7),
-                            shape: BoxShape.circle,
-                          ),
-                        )
-                      else
-                        const SizedBox(width: 16, height: 16),
-                      if (datedEntries.isNotEmpty) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          Icons.event_available_rounded,
-                          size: 14,
-                          color: const Color(0xFFFF7A6B).withValues(
-                            alpha: 0.92,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            if (routinesForDate.length > 1)
-              Positioned(
-                top: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 5,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4DA3FF).withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    '${routinesForDate.length}',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      color: const Color(0xFF4DA3FF),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
   /// Abre el detalle de una fecha concreta desde el calendario.
   ///
   /// La hoja resuelve tres estados: registro real, vista previa futura o un
@@ -3182,24 +2902,34 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final datedBlocksForDate = datedEntries.map((entry) => entry.block).toList();
     final recordAndReminderBlocks = record == null
         ? <DayBlock>[]
-        : sortBlocksChronologically([
+        : DayBlockCollectionUtils.sortChronologically([
             ...record.blocks,
-            ...datedBlocksForDate.map(cloneBlockForDailyRecord),
+            ...datedBlocksForDate.map(
+              DayBlockCollectionUtils.cloneForDailyRecord,
+            ),
           ]);
     final hasRoutinePreview = activeRoutine!.appliesOn(date);
     final hasDatedEntries = datedEntries.isNotEmpty;
     final hasScheduledRoutine = hasRoutinePreview || hasDatedEntries;
-    final isFuture = isFutureCalendarDay(date);
+    final isFuture = TodayCalendarUtils.isFutureCalendarDay(
+      date: date,
+      todayDate: todayDate,
+    );
     final canManageDatedEntries =
         !DateTime(date.year, date.month, date.day).isBefore(
           DateTime(todayDate.year, todayDate.month, todayDate.day),
         );
     final previewBlocks = activeRoutine!.blocks
-        .map((block) => cloneBlockForDailyRecord(block, isDone: false))
+        .map(
+          (block) => DayBlockCollectionUtils.cloneForDailyRecord(
+            block,
+            isDone: false,
+          ),
+        )
         .toList();
-    final previewAndReminderBlocks = sortBlocksChronologically([
+    final previewAndReminderBlocks = DayBlockCollectionUtils.sortChronologically([
       ...previewBlocks,
-      ...datedBlocksForDate.map(cloneBlockForDailyRecord),
+      ...datedBlocksForDate.map(DayBlockCollectionUtils.cloneForDailyRecord),
     ]);
     final progressEligibleBlocks = recordAndReminderBlocks
         .where((block) => block.countsTowardProgress)
@@ -3211,7 +2941,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
             : progressEligibleBlocks.where((block) => block.isDone).length /
                 progressEligibleBlocks.length;
     final progressColor = record == null
-        ? getCalendarPreviewColor(hasScheduledRoutine: hasScheduledRoutine)
+        ? TodayCalendarUtils.getPreviewColor(
+            hasScheduledRoutine: hasScheduledRoutine,
+          )
         : record.isCompletedDay
             ? const Color(0xFF41C47B)
             : progress > 0
@@ -3482,42 +3214,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                             '${block.start} - ${block.end}${block.description.trim().isEmpty ? '' : ' | ${block.description}'}',
                                           ),
                                           trailing: canManageDatedEntries
-                                              ? Wrap(
-                                                  spacing: 4,
-                                                  children: [
-                                                    IconButton(
-                                                      tooltip: 'Editar evento',
-                                                      onPressed: () async {
-                                                        Navigator.of(context).pop();
-                                                        await editDatedBlockEntry(
-                                                          entry,
-                                                        );
-                                                        if (!mounted) return;
-                                                        await showCalendarDateDetails(
-                                                          date,
-                                                        );
-                                                      },
-                                                      icon: const Icon(
-                                                        Icons.edit_rounded,
-                                                      ),
-                                                    ),
-                                                    IconButton(
-                                                      tooltip: 'Eliminar evento',
-                                                      onPressed: () async {
-                                                        Navigator.of(context).pop();
-                                                        await deleteDatedBlockEntry(
-                                                          entry,
-                                                        );
-                                                        if (!mounted) return;
-                                                        await showCalendarDateDetails(
-                                                          date,
-                                                        );
-                                                      },
-                                                      icon: const Icon(
-                                                        Icons.delete_outline_rounded,
-                                                      ),
-                                                    ),
-                                                  ],
+                                              ? buildDatedEntryActionsMenu(
+                                                  entry: entry,
+                                                  onOpenDateDetails: () =>
+                                                      showCalendarDateDetails(
+                                                    date,
+                                                  ),
+                                                  closeCurrentSheetFirst: true,
                                                 )
                                               : null,
                                         ),
@@ -3590,46 +3293,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                                 '${block.start} - ${block.end}${block.description.trim().isEmpty ? '' : ' | ${block.description}'}',
                                               ),
                                               trailing: canManageDatedEntries
-                                                  ? Wrap(
-                                                      spacing: 4,
-                                                      children: [
-                                                        IconButton(
-                                                          tooltip: 'Editar evento',
-                                                          onPressed: () async {
-                                                            Navigator.of(context)
-                                                                .pop();
-                                                            await editDatedBlockEntry(
-                                                              entry,
-                                                            );
-                                                            if (!mounted) return;
-                                                            await showCalendarDateDetails(
-                                                              date,
-                                                            );
-                                                          },
-                                                          icon: const Icon(
-                                                            Icons.edit_rounded,
-                                                          ),
-                                                        ),
-                                                        IconButton(
-                                                          tooltip:
-                                                              'Eliminar evento',
-                                                          onPressed: () async {
-                                                            Navigator.of(context)
-                                                                .pop();
-                                                            await deleteDatedBlockEntry(
-                                                              entry,
-                                                            );
-                                                            if (!mounted) return;
-                                                            await showCalendarDateDetails(
-                                                              date,
-                                                            );
-                                                          },
-                                                          icon: const Icon(
-                                                            Icons
-                                                                .delete_outline_rounded,
-                                                          ),
-                                                        ),
-                                                      ],
+                                                  ? buildDatedEntryActionsMenu(
+                                                      entry: entry,
+                                                      onOpenDateDetails: () =>
+                                                          showCalendarDateDetails(
+                                                        date,
+                                                      ),
+                                                      closeCurrentSheetFirst: true,
                                                     )
                                                   : null,
                                             ),
@@ -3725,13 +3395,25 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       backgroundColor: Theme.of(context).colorScheme.surface,
       showDragHandle: true,
       builder: (context) {
-        DateTime visibleMonth = calendarMonthAnchor;
+        DateTime visibleMonth = TodayCalendarUtils.monthAnchor(todayDate);
 
         return StatefulBuilder(
           builder: (context, setSheetState) {
             final theme = Theme.of(context);
-            final calendarDays = buildCalendarGridDays(visibleMonth);
-            final monthSummary = getCalendarMonthSummary(visibleMonth);
+            final calendarDays = TodayCalendarUtils.buildGridDays(visibleMonth);
+            final monthSummary = TodayCalendarUtils.buildMonthSummary(
+              monthDate: visibleMonth,
+              recordForDate: getRoutineRecordForDate,
+              datedEntriesCountForDate: (day) =>
+                  getDatedBlocksForDate(DateKey.fromDate(day)).length,
+              hasCompletedDatedEntriesForDate: (day) => getDatedBlocksForDate(
+                DateKey.fromDate(day),
+              ).any((entry) => entry.block.isDone),
+              routinesApplyingCountForDate: (day) =>
+                  getRoutinesApplyingOnDate(day).length,
+              activeRoutineAppliesOnDay: (day) =>
+                  activeRoutine?.appliesOn(day) ?? false,
+            );
             final formattedMonth =
                 DateKey.formatForDisplay(DateKey.fromDate(visibleMonth));
             final parts = formattedMonth.split(' ');
@@ -3809,27 +3491,23 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          buildCalendarSummaryChip(
-                            context: context,
+                          TodayCalendarSummaryChip(
                             icon: Icons.local_fire_department_outlined,
                             label: 'con actividad',
                             value: '${monthSummary.activityDays}',
                           ),
-                          buildCalendarSummaryChip(
-                            context: context,
+                          TodayCalendarSummaryChip(
                             icon: Icons.event_note_rounded,
                             label: 'planificados',
                             value: '${monthSummary.plannedDays}',
                           ),
-                          buildCalendarSummaryChip(
-                            context: context,
+                          TodayCalendarSummaryChip(
                             icon: Icons.event_available_rounded,
                             label: 'con eventos',
                             value: '${monthSummary.eventDays}',
                           ),
                           if (monthSummary.multiRoutineDays > 0)
-                            buildCalendarSummaryChip(
-                              context: context,
+                            TodayCalendarSummaryChip(
                               icon: Icons.layers_rounded,
                               label: 'con varias rutinas',
                               value: '${monthSummary.multiRoutineDays}',
@@ -3842,7 +3520,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         child: TextButton.icon(
                           onPressed: () {
                             setSheetState(() {
-                              visibleMonth = calendarMonthAnchor;
+                              visibleMonth = TodayCalendarUtils.monthAnchor(
+                                todayDate,
+                              );
                             });
                           },
                           icon: const Icon(Icons.today_rounded),
@@ -3866,12 +3546,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           'Sab',
                           'Dom',
                         ].map((label) {
-                          return Builder(
-                            builder: (context) => buildCalendarWeekdayCell(
-                              context: context,
-                              label: label,
-                            ),
-                          );
+                          return TodayCalendarWeekdayCell(label: label);
                         }).toList(),
                       ),
                       const SizedBox(height: 8),
@@ -3887,11 +3562,35 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                           ),
                           itemBuilder: (context, index) {
                             final day = calendarDays[index];
+                            final record = getRoutineRecordForDate(day);
+                            final datedEntries = getDatedBlocksForDate(
+                              DateKey.fromDate(day),
+                            );
+                            final routinesForDate = getRoutinesApplyingOnDate(day);
 
-                            return buildCalendarDayTile(
-                              context: context,
+                            return TodayCalendarDayTile(
                               day: day,
                               visibleMonth: visibleMonth,
+                              isToday: TodayCalendarUtils.isSameCalendarDay(
+                                day,
+                                todayDate,
+                              ),
+                              isFuture: TodayCalendarUtils.isFutureCalendarDay(
+                                date: day,
+                                todayDate: todayDate,
+                              ),
+                              hasScheduledRoutine:
+                                  (activeRoutine?.appliesOn(day) ?? false) ||
+                                  datedEntries.isNotEmpty,
+                              hasActivity:
+                                  (record?.hasAnyCompletedBlocks ?? false) ||
+                                  datedEntries.any(
+                                    (entry) => entry.block.isDone,
+                                  ),
+                              isCompletedDay: record?.isCompletedDay ?? false,
+                              hasDatedEntries: datedEntries.isNotEmpty,
+                              routineCount: routinesForDate.length,
+                              onTap: () => Navigator.of(context).pop(day),
                             );
                           },
                         ),
@@ -3901,8 +3600,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         spacing: 12,
                         runSpacing: 8,
                         children: [
-                          buildCalendarLegendItem(
-                            context: context,
+                          TodayCalendarLegendItem(
                             marker: const Icon(
                               Icons.local_fire_department_rounded,
                               size: 16,
@@ -3910,8 +3608,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                             ),
                             label: 'Dia con actividad',
                           ),
-                          buildCalendarLegendItem(
-                            context: context,
+                          TodayCalendarLegendItem(
                             marker: Container(
                               width: 8,
                               height: 8,
@@ -3923,8 +3620,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                             ),
                             label: 'Dia futuro planificado',
                           ),
-                          buildCalendarLegendItem(
-                            context: context,
+                          TodayCalendarLegendItem(
                             marker: const Icon(
                               Icons.event_available_rounded,
                               size: 14,
@@ -3932,8 +3628,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                             ),
                             label: 'Evento puntual',
                           ),
-                          buildCalendarLegendItem(
-                            context: context,
+                          TodayCalendarLegendItem(
                             marker: Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 5,
@@ -4413,7 +4108,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         (isRoutineUpcoming(a) ? 0 : 1).compareTo(isRoutineUpcoming(b) ? 0 : 1);
     if (upcomingComparison != 0) return upcomingComparison;
 
-    return compareRoutinesForTodaySuggestion(a, b);
+    return TodayRoutineUtils.compareForTodaySuggestion(a, b);
   }
 
   List<Routine> sortRoutinesForManagement(Iterable<Routine> source) {
@@ -4565,83 +4260,19 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   }
 
   /// Construye los avisos principales de vigencia que deben verse hoy.
-  List<_RoutineNotice> get activeRoutineNotices {
+  List<RoutineNotice> get activeRoutineNotices {
     if (activeRoutine == null) return const [];
 
-    final notices = <_RoutineNotice>[];
-    final activeSchedule = activeRoutine!.schedule;
-    final activeDaysUntilEnd = activeSchedule.daysUntilEnd(todayDate);
-
-    if (!activeRoutine!.appliesOn(todayDate)) {
-      notices.add(
-        const _RoutineNotice(
-          icon: Icons.schedule_send_outlined,
-          color: Color(0xFF4DA3FF),
-          title: 'Rutina fuera de rango sugerido',
-          description:
-              'Puedes seguir usandola o editarla, pero hoy no es la rutina sugerida por su vigencia.',
-        ),
-      );
-    } else if (activeDaysUntilEnd == 0) {
-      notices.add(
-        const _RoutineNotice(
-          icon: Icons.event_busy_outlined,
-          color: Color(0xFFFFA24D),
-          title: 'Esta rutina termina hoy',
-          description:
-              'Si quieres continuar con ella despues, conviene extender su rango o preparar una nueva rutina.',
-        ),
-      );
-    } else if (activeDaysUntilEnd != null && activeDaysUntilEnd <= 2) {
-      notices.add(
-        _RoutineNotice(
-          icon: Icons.hourglass_bottom_rounded,
-          color: const Color(0xFFFFA24D),
-          title: 'Esta rutina esta por terminar',
-          description:
-              'Su vigencia termina en $activeDaysUntilEnd d\u00EDas. Puedes dejarla as\u00ED o preparar la siguiente.',
-        ),
-      );
-    }
-
-    final upcomingRoutines = routines
-        .where((routine) => routine.id != activeRoutine!.id)
-        .where(
-          (routine) =>
-              (routine.schedule.daysUntilStart(todayDate) ?? 9999) <= 7,
-        )
-        .toList()
-      ..sort(
-        (a, b) => (a.schedule.daysUntilStart(todayDate) ?? 9999)
-            .compareTo(b.schedule.daysUntilStart(todayDate) ?? 9999),
-      );
-
-    if (upcomingRoutines.isNotEmpty) {
-      final nextRoutine = upcomingRoutines.first;
-      final daysUntilStart = nextRoutine.schedule.daysUntilStart(todayDate) ?? 0;
-      final startText = switch (daysUntilStart) {
-        0 => 'hoy',
-        1 => 'ma\u00F1ana',
-        _ => 'en $daysUntilStart d\u00EDas',
-      };
-
-      notices.add(
-        _RoutineNotice(
-          icon: Icons.upcoming_rounded,
-          color: const Color(0xFF4DA3FF),
-          title: 'Hay otra rutina programada',
-          description:
-              '"${nextRoutine.name}" empieza $startText. Puedes revisarla desde el selector cuando quieras.',
-        ),
-      );
-    }
-
-    return notices;
+    return TodayRoutineUtils.buildActiveRoutineNotices(
+      activeRoutine: activeRoutine!,
+      routines: routines,
+      todayDate: todayDate,
+    );
   }
 
   Widget buildRoutineNoticeCard({
     required BuildContext context,
-    required _RoutineNotice notice,
+    required RoutineNotice notice,
   }) {
     final theme = Theme.of(context);
 
@@ -4693,19 +4324,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
   /// Resume el estado actual del sistema de notificaciones para la UI.
   String get notificationStatusDescription {
-    if (!NotificationService.supportsLocalNotifications) {
-      return 'Esta plataforma web conserva la preferencia, pero no agenda recordatorios locales.';
-    }
-
-    if (notificationsEnabled == false) {
-      return 'Los recordatorios existen, pero el dispositivo parece tener las notificaciones desactivadas.';
-    }
-
-    if (scheduledNotificationsCount == 0) {
-      return 'Aun no hay recordatorios futuros programados. Revisa si los bloques con push estan en el futuro.';
-    }
-
-    return 'Ritual tiene $scheduledNotificationsCount recordatorios futuros programados en este dispositivo.';
+    return TodayNotificationCoordinator.buildStatusDescription(
+      notificationDiagnostics,
+    );
   }
 
   Widget buildNotificationStatusCard({
@@ -4749,10 +4370,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                 avatar: const Icon(Icons.notifications_active_outlined, size: 18),
                 label: Text('$pushEnabledBlocksCount bloques con push'),
               ),
-              if (NotificationService.supportsLocalNotifications)
+              if (notificationDiagnostics.supportsLocalNotifications)
                 Chip(
                   avatar: const Icon(Icons.schedule_send_rounded, size: 18),
-                  label: Text('$scheduledNotificationsCount programadas'),
+                  label: Text(
+                    '${notificationDiagnostics.scheduledNotificationsCount} programadas',
+                  ),
                 ),
             ],
           ),
@@ -4761,7 +4384,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
             spacing: 8,
             runSpacing: 8,
             children: [
-              if (NotificationService.supportsLocalNotifications)
+              if (notificationDiagnostics.supportsLocalNotifications)
                 FilledButton.tonalIcon(
                   onPressed: isNotificationActionInProgress
                       ? null
@@ -4769,7 +4392,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                   icon: const Icon(Icons.notifications_outlined),
                   label: const Text('Revisar permisos'),
                 ),
-              if (NotificationService.supportsLocalNotifications)
+              if (notificationDiagnostics.supportsLocalNotifications)
                 OutlinedButton.icon(
                   onPressed: isNotificationActionInProgress
                       ? null
@@ -4777,7 +4400,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                   icon: const Icon(Icons.sync_rounded),
                   label: const Text('Reagendar'),
                 ),
-              if (NotificationService.supportsLocalNotifications)
+              if (notificationDiagnostics.supportsLocalNotifications)
                 OutlinedButton.icon(
                   onPressed: isNotificationActionInProgress
                       ? null
@@ -4789,6 +4412,69 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           ),
         ],
       ),
+    );
+  }
+
+  /// Menu compacto para administrar un evento puntual sin mezclarlo con la
+  /// rutina base.
+  Widget buildDatedEntryActionsMenu({
+    required DatedBlockEntry entry,
+    required Future<void> Function() onOpenDateDetails,
+    bool closeCurrentSheetFirst = false,
+  }) {
+    return PopupMenuButton<String>(
+      tooltip: 'Acciones del evento',
+      onSelected: (value) async {
+        if (closeCurrentSheetFirst && mounted) {
+          Navigator.of(context).pop();
+        }
+
+        switch (value) {
+          case 'open':
+            await onOpenDateDetails();
+            break;
+          case 'edit':
+            await editDatedBlockEntry(entry);
+            await onOpenDateDetails();
+            break;
+          case 'move':
+            await moveDatedBlockEntryToAnotherDate(entry);
+            await onOpenDateDetails();
+            break;
+          case 'duplicate':
+            await duplicateDatedBlockEntryToAnotherDate(entry);
+            await onOpenDateDetails();
+            break;
+          case 'delete':
+            await deleteDatedBlockEntry(entry);
+            if (closeCurrentSheetFirst) {
+              await onOpenDateDetails();
+            }
+            break;
+        }
+      },
+      itemBuilder: (context) => const [
+        PopupMenuItem(
+          value: 'open',
+          child: Text('Abrir fecha'),
+        ),
+        PopupMenuItem(
+          value: 'edit',
+          child: Text('Editar'),
+        ),
+        PopupMenuItem(
+          value: 'move',
+          child: Text('Mover a otra fecha'),
+        ),
+        PopupMenuItem(
+          value: 'duplicate',
+          child: Text('Duplicar en otra fecha'),
+        ),
+        PopupMenuItem(
+          value: 'delete',
+          child: Text('Eliminar'),
+        ),
+      ],
     );
   }
 
@@ -4884,6 +4570,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                         ],
                       ],
                     ),
+                  ),
+                  buildDatedEntryActionsMenu(
+                    entry: entry,
+                    onOpenDateDetails: () =>
+                        showCalendarDateDetails(DateKey.toDate(entry.dateKey)),
                   ),
                 ],
               ),
