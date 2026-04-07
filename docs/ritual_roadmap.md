@@ -9,6 +9,26 @@ Este documento convierte la vision del producto en una secuencia concreta de tra
 - Si una tarea es muy grande, dividela en subtareas antes de implementarla.
 - Intenta hacer un commit por cambio coherente y pequeno.
 
+## Progreso general
+
+Estado estimado actual del proyecto:
+
+`70%`
+
+Barra de avance:
+
+`[--------------] 70% completado`
+
+Falta aproximada:
+
+`30%`
+
+Regla de actualizacion:
+
+- mover este porcentaje cuando se cierre una capacidad importante de producto
+- no moverlo por ajustes muy pequenos o fixes aislados
+- si aparece una nueva linea grande de producto, el porcentaje puede mantenerse aunque haya habido trabajo real
+
 ## Fase 1 - Base solida
 
 ### RIT-001 Separar BlockType del widget
@@ -35,20 +55,12 @@ Commit sugerido:
 
 ### RIT-004 Mejorar modelo de tiempo
 
-Hoy `DayBlock` usa `String` para `start` y `end`. Eso sirve para avanzar rapido, pero a mediano plazo limita validaciones y ordenamiento.
+Ya esta completado. `DayBlock` ahora guarda minutos desde medianoche y mantiene `HH:mm` como representacion de UI para no perder legibilidad.
 
-Objetivos:
-- Representar mejor la hora.
-- Evitar bloques invalidos.
-- Preparar el proyecto para edicion de horarios, validaciones y calculos.
-
-Opciones futuras:
-- usar una clase propia para tiempo del dia
-- usar `TimeOfDay` en la capa de UI y una representacion serializable en data
-- guardar minutos desde medianoche
-
-Commit sugerido:
-`refactor: improve day block time model`
+Resultado:
+- comparaciones mas seguras
+- orden cronologico mas confiable
+- base mejor para validaciones y notificaciones
 
 ### RIT-005 Agregar tests basicos
 
@@ -253,6 +265,19 @@ Ejemplos:
 Commit sugerido:
 `feat: add routine statistics`
 
+### RIT-025A Agregar pantalla dedicada de estadisticas
+
+Ya esta completado. La home conserva un resumen rapido, pero ahora existe una vista separada para leer el sistema con mas calma.
+
+Resultado esperado:
+- resumen global
+- filtros por rutina o contexto temporal
+- comparacion entre rutinas
+- lectura de rachas, 7 dias, 30 dias y progreso historico
+
+Commit sugerido:
+`feat: add dedicated statistics page`
+
 ### RIT-026 Preparar base de gamificacion
 
 Antes de meter puntos y logros, conviene definir:
@@ -283,13 +308,16 @@ Commit sugerido:
 
 ### RIT-027 Pantalla de ajustes
 
-Opciones posibles:
-- preferencias visuales
-- reinicio diario
-- notificaciones futuras
+Ya esta completado en una primera version funcional.
+
+Actualmente cubre:
+- avisos por traslape
+- permisos automaticos de notificaciones
+- horizonte de programacion de recordatorios
+- visibilidad de eventos puntuales completados
 
 Commit sugerido:
-`feat: add settings page`
+`feat: add settings page foundation`
 
 ### RIT-028 Exportar a Excel
 
@@ -383,12 +411,17 @@ Ya quedaron implementadas estas capacidades del roadmap:
 - bloques puntuales por fecha con soporte para eventos y recordatorios
 - edicion y eliminacion de eventos puntuales desde el detalle de fecha
 - base de notificaciones locales con diagnostico, reagendado y prueba manual
+- mejora del modelo de tiempo a minutos desde medianoche
+- gestion de rutinas por periodo mas rica
+- estadisticas enriquecidas por rutina
+- pantalla dedicada de estadisticas
+- pantalla de ajustes base
 
 Siguiente bloque recomendado:
 
 1. seguir validando notificaciones reales en Android y cerrar los casos borde
 2. enriquecer aun mas los eventos puntuales de calendario
-3. mejorar el modelo de tiempo
+3. seguir puliendo gestion de rutinas por periodo y agenda real
 4. reforzar tests de flujos completos
 
 ## Idea futura anotada

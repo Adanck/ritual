@@ -4,6 +4,29 @@ Este archivo sirve como contexto vivo del proyecto. La idea es que puedas abrirl
 
 Se recomienda mantener este documento actualizado cada vez que cierres una sesion importante o completes una feature relevante.
 
+## 0. Progreso general
+
+Progreso estimado actual del producto:
+
+`70%`
+
+Barra de avance:
+
+`[--------------] 70% completado`
+
+Lectura practica:
+
+- base y MVP serio: ya estan bastante solidos
+- producto pulido y mas completo: todavia queda trabajo relevante
+- falta aproximada: `30%`
+
+Como actualizar este porcentaje:
+
+- subelo cuando se cierre una capacidad grande de producto o una mejora estructural importante
+- no lo subas por cambios cosmeticos pequenos o fixes aislados
+- si se abre una linea nueva de producto grande, el porcentaje puede mantenerse estable aunque se haya trabajado mucho
+- la meta no es precision matematica, sino orientacion honesta de por donde vamos
+
 ## 1. Vision del producto
 
 `Ritual` es una app de planificacion diaria basada en bloques de tiempo. La intencion del producto no es solo listar tareas, sino ayudar al usuario a estructurar su dia de forma consciente, convertir acciones repetidas en rutina y mantener consistencia a traves de feedback visual y seguimiento.
@@ -185,9 +208,10 @@ Lo mas importante que sigue pendiente, en terminos practicos, es esto:
 
 ### Prioridad alta
 
-- mejorar el modelo de tiempo para que no dependa siempre de `String`
 - seguir estabilizando las notificaciones reales en Android y dispositivo
 - pulir mas la experiencia de eventos puntuales por fecha
+- seguir fortaleciendo la gestion de rutinas por periodo
+- seguir enriqueciendo estadisticas y lectura historica del sistema
 - reforzar tests en flujos mas completos de calendario, eventos y cambio de rutina
 
 ### Prioridad media
@@ -211,7 +235,7 @@ Si otra persona o un futuro hilo retoma el proyecto, el orden recomendado es:
 
 1. estabilizar notificaciones reales en Android y validar mejor permisos, reagendado y prueba en dispositivo
 2. seguir enriqueciendo eventos puntuales por fecha
-3. mejorar el modelo de tiempo para no depender tanto de `String`
+3. seguir reforzando estadisticas y gestion de rutinas por periodo
 4. reforzar tests sobre calendario, eventos y notificaciones
 5. mejorar la estructura interna del proyecto para que `TodayPage` no concentre tanta logica
 
@@ -307,6 +331,14 @@ Decision de producto:
 La app ya puede sugerir automaticamente la mejor rutina para hoy cuando hay varias opciones vigentes.
 Tambien existe una vista de administracion que agrupa rutinas por periodo y estado temporal para que sea mas facil mantenerlas.
 
+Ademas, esa vista ya muestra una lectura mas rica por rutina:
+
+- racha actual
+- rendimiento de 7 dias
+- progreso historico
+- estado de vigencia
+- pista breve de uso o preparacion
+
 ### Calendario y bloques puntuales
 
 El calendario mensual ya no es solo una lista de registros. Ahora permite:
@@ -330,6 +362,17 @@ Ya existe una base real para notificaciones locales:
 - diagnostico de permisos y cantidad de recordatorios programados
 
 Todavia conviene seguir probandolo en Android real para asegurar que el comportamiento sea consistente.
+
+### Estadisticas dedicadas
+
+Ya existe una pantalla especifica de estadisticas separada de la home.
+
+Permite:
+
+- ver una vision general del sistema
+- revisar cumplimiento global
+- comparar rutinas por racha, 7 dias, 30 dias y progreso historico
+- filtrar rutinas por contexto temporal
 
 ### Idea futura anotada
 
