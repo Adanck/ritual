@@ -12,6 +12,7 @@ class TodayNotificationStatusCard extends StatelessWidget {
   final String statusDescription;
   final String Function(DateTime value) formatWhen;
   final bool isActionInProgress;
+  final VoidCallback onOpenAgenda;
   final VoidCallback onReviewPermissions;
   final VoidCallback onResync;
   final VoidCallback onSendTest;
@@ -23,6 +24,7 @@ class TodayNotificationStatusCard extends StatelessWidget {
     required this.statusDescription,
     required this.formatWhen,
     required this.isActionInProgress,
+    required this.onOpenAgenda,
     required this.onReviewPermissions,
     required this.onResync,
     required this.onSendTest,
@@ -104,6 +106,22 @@ class TodayNotificationStatusCard extends StatelessWidget {
                     '${diagnostics.scheduledDatedNotificationsCount} puntuales',
                   ),
                 ),
+              if (diagnostics.supportsLocalNotifications &&
+                  diagnostics.missingDeviceNotificationsCount > 0)
+                Chip(
+                  avatar: const Icon(Icons.warning_amber_rounded, size: 18),
+                  label: Text(
+                    '${diagnostics.missingDeviceNotificationsCount} faltan',
+                  ),
+                ),
+              if (diagnostics.supportsLocalNotifications &&
+                  diagnostics.unexpectedDeviceNotificationsCount > 0)
+                Chip(
+                  avatar: const Icon(Icons.playlist_remove_rounded, size: 18),
+                  label: Text(
+                    '${diagnostics.unexpectedDeviceNotificationsCount} sobrantes',
+                  ),
+                ),
               if (diagnostics.supportsLocalNotifications)
                 Chip(
                   avatar: Icon(
@@ -167,6 +185,12 @@ class TodayNotificationStatusCard extends StatelessWidget {
             runSpacing: 8,
             children: [
               if (diagnostics.supportsLocalNotifications)
+                FilledButton.icon(
+                  onPressed: isActionInProgress ? null : onOpenAgenda,
+                  icon: const Icon(Icons.view_list_rounded),
+                  label: const Text('Ver agenda'),
+                ),
+              if (diagnostics.supportsLocalNotifications)
                 FilledButton.tonalIcon(
                   onPressed: isActionInProgress ? null : onReviewPermissions,
                   icon: const Icon(Icons.notifications_outlined),
@@ -190,4 +214,170 @@ class TodayNotificationStatusCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Hoja informativa con la agenda esperada de recordatorios de Ritual.
+///
+/// Ayuda a validar visualmente si los recordatorios que la app espera tener
+/// agendados coinciden con lo que el dispositivo reporta como pendiente.
+class TodayNotificationAgendaSheet extends StatelessWidget {
+  final List<NotificationAgendaItemData> items;
+  final String Function(DateTime value) formatWhen;
+
+  const TodayNotificationAgendaSheet({
+    super.key,
+    required this.items,
+    required this.formatWhen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Agenda de recordatorios',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Aqui ves los recordatorios que Ritual espera tener programados en este dispositivo.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.white70,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (items.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.04),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.06),
+                  ),
+                ),
+                child: const Text(
+                  'No hay recordatorios futuros en la agenda actual.',
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: items.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 10),
+                  itemBuilder: (context, index) {
+                    final item = items[index];
+
+                    return Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.04),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.06),
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: item.isPresentOnDevice
+                                  ? const Color(0xFF2DD4BF).withValues(alpha: 0.12)
+                                  : const Color(0xFFFFA24D).withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              item.isPresentOnDevice
+                                  ? Icons.verified_rounded
+                                  : Icons.sync_problem_rounded,
+                              color: item.isPresentOnDevice
+                                  ? const Color(0xFF2DD4BF)
+                                  : const Color(0xFFFFA24D),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.title,
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  item.body,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    Chip(
+                                      label: Text(formatWhen(item.when)),
+                                    ),
+                                    if (item.isDatedEvent)
+                                      const Chip(
+                                        label: Text('Puntual'),
+                                      ),
+                                    Chip(
+                                      label: Text(
+                                        item.isPresentOnDevice
+                                            ? 'En dispositivo'
+                                            : 'Pendiente de resincronizar',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class NotificationAgendaItemData {
+  final String sourceKey;
+  final String title;
+  final String body;
+  final DateTime when;
+  final bool isPresentOnDevice;
+
+  const NotificationAgendaItemData({
+    required this.sourceKey,
+    required this.title,
+    required this.body,
+    required this.when,
+    required this.isPresentOnDevice,
+  });
+
+  bool get isDatedEvent => sourceKey.startsWith('dated:');
 }

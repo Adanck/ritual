@@ -24,6 +24,11 @@ class NotificationService {
       'Recordatorios locales para bloques y eventos de Ritual.';
   static bool _initialized = false;
   static bool _timeZoneInitialized = false;
+  static const Set<String> _ritualPayloadPrefixes = {
+    'routine:',
+    'record:',
+    'dated:',
+  };
 
   /// Indica si la plataforma actual soporta esta estrategia de notificaciones.
   static bool get supportsLocalNotifications => !kIsWeb;
@@ -127,6 +132,43 @@ class NotificationService {
       return pendingRequests.length;
     } catch (_) {
       return 0;
+    }
+  }
+
+  /// Devuelve una vista consistente del estado pendiente dentro del dispositivo.
+  ///
+  /// Regla: filtramos las payloads que pertenecen a Ritual para poder comparar
+  /// la agenda esperada contra la agenda real sin ruido de otras acciones que
+  /// no formen parte de recordatorios programados por bloques o eventos.
+  static Future<PendingNotificationSnapshot> getPendingNotificationSnapshot() async {
+    if (kIsWeb) {
+      return const PendingNotificationSnapshot(
+        count: 0,
+        ritualSourceKeys: {},
+      );
+    }
+
+    await initialize();
+
+    try {
+      final pendingRequests = await _plugin.pendingNotificationRequests();
+      final ritualSourceKeys = pendingRequests
+          .map((request) => request.payload)
+          .whereType<String>()
+          .where((payload) {
+            return _ritualPayloadPrefixes.any(payload.startsWith);
+          })
+          .toSet();
+
+      return PendingNotificationSnapshot(
+        count: pendingRequests.length,
+        ritualSourceKeys: ritualSourceKeys,
+      );
+    } catch (_) {
+      return const PendingNotificationSnapshot(
+        count: 0,
+        ritualSourceKeys: {},
+      );
     }
   }
 
@@ -389,5 +431,16 @@ class NotificationPreviewEntry {
     required this.body,
     required this.when,
     required this.payload,
+  });
+}
+
+/// Estado pendiente observado en el dispositivo para la app actual.
+class PendingNotificationSnapshot {
+  final int count;
+  final Set<String> ritualSourceKeys;
+
+  const PendingNotificationSnapshot({
+    required this.count,
+    required this.ritualSourceKeys,
   });
 }

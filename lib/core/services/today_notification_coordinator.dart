@@ -19,6 +19,69 @@ class NotificationActionResult {
 /// La idea es sacar de la UI la secuencia de pedir permisos, refrescar estado,
 /// reagendar recordatorios y construir mensajes de feedback.
 class TodayNotificationCoordinator {
+  /// Decide si vale la pena intentar una reparacion silenciosa.
+  ///
+  /// Regla: solo reparamos cuando la plataforma soporta notificaciones, el
+  /// permiso no esta claramente apagado y la agenda sigue desalineada.
+  static bool shouldAttemptAutoRepair(NotificationDiagnostics diagnostics) {
+    if (!diagnostics.supportsLocalNotifications) return false;
+    if (diagnostics.notificationsEnabled == false) return false;
+    if (diagnostics.isScheduleAligned) return false;
+
+    return diagnostics.scheduledNotificationsCount > 0 ||
+        diagnostics.pendingDeviceNotificationsCount > 0;
+  }
+
+  /// Construye el diagnostico final a partir del estado esperado y observado.
+  ///
+  /// Regla: si tenemos claves reales del dispositivo, preferimos comparacion
+  /// exacta por fuente. Si no, caemos a una comparacion por cantidades como
+  /// degradacion segura para no fingir precision que no existe.
+  static NotificationDiagnostics buildDiagnostics({
+    required bool? notificationsEnabled,
+    required int pendingDeviceNotificationsCount,
+    required Set<String> pendingDeviceSourceKeys,
+    List<NotificationPreviewEntry>? previewEntries,
+    DateTime? refreshedAt,
+  }) {
+    final scheduledCount = previewEntries?.length ?? pendingDeviceNotificationsCount;
+    final scheduledDatedNotificationsCount =
+        previewEntries
+            ?.where((entry) => entry.sourceKey.startsWith('dated:'))
+            .length ??
+        0;
+    final expectedSourceKeys =
+        previewEntries?.map((entry) => entry.sourceKey).toSet() ?? <String>{};
+    final usedExactSourceComparison = previewEntries != null;
+    final missingDeviceNotificationsCount = usedExactSourceComparison
+        ? expectedSourceKeys.difference(pendingDeviceSourceKeys).length
+        : 0;
+    final unexpectedDeviceNotificationsCount = usedExactSourceComparison
+        ? pendingDeviceSourceKeys.difference(expectedSourceKeys).length
+        : 0;
+
+    return NotificationDiagnostics(
+      supportsLocalNotifications: true,
+      notificationsEnabled: notificationsEnabled,
+      scheduledNotificationsCount: scheduledCount,
+      pendingDeviceNotificationsCount: pendingDeviceNotificationsCount,
+      scheduledDatedNotificationsCount: scheduledDatedNotificationsCount,
+      missingDeviceNotificationsCount: missingDeviceNotificationsCount,
+      unexpectedDeviceNotificationsCount: unexpectedDeviceNotificationsCount,
+      usedExactSourceComparison: usedExactSourceComparison,
+      isScheduleAligned: usedExactSourceComparison
+          ? missingDeviceNotificationsCount == 0 &&
+              unexpectedDeviceNotificationsCount == 0
+          : pendingDeviceNotificationsCount == scheduledCount,
+      nextScheduledAt:
+          previewEntries == null || previewEntries.isEmpty
+              ? null
+              : previewEntries.first.when,
+      lastRefreshedAt: refreshedAt ?? DateTime.now(),
+      deviceScheduledSourceKeys: pendingDeviceSourceKeys.toList()..sort(),
+    );
+  }
+
   /// Consulta el estado actual de soporte, permisos y recordatorios futuros.
   static Future<NotificationDiagnostics> refreshDiagnostics({
     List<NotificationPreviewEntry>? previewEntries,
@@ -28,27 +91,14 @@ class TodayNotificationCoordinator {
     }
 
     final enabled = await NotificationService.areNotificationsEnabled();
-    final pendingCount = await NotificationService.getPendingNotificationsCount();
-    final scheduledCount = previewEntries?.length ?? pendingCount;
-    final scheduledDatedNotificationsCount =
-        previewEntries
-            ?.where((entry) => entry.sourceKey.startsWith('dated:'))
-            .length ??
-        0;
+    final pendingSnapshot =
+        await NotificationService.getPendingNotificationSnapshot();
 
-    return NotificationDiagnostics(
-      supportsLocalNotifications: true,
+    return buildDiagnostics(
       notificationsEnabled: enabled,
-      scheduledNotificationsCount: scheduledCount,
-      pendingDeviceNotificationsCount: pendingCount,
-      scheduledDatedNotificationsCount: scheduledDatedNotificationsCount,
-      isScheduleAligned:
-          previewEntries == null ? true : pendingCount == scheduledCount,
-      nextScheduledAt:
-          previewEntries == null || previewEntries.isEmpty
-              ? null
-              : previewEntries.first.when,
-      lastRefreshedAt: DateTime.now(),
+      pendingDeviceNotificationsCount: pendingSnapshot.count,
+      pendingDeviceSourceKeys: pendingSnapshot.ritualSourceKeys,
+      previewEntries: previewEntries,
     );
   }
 
@@ -155,6 +205,10 @@ class TodayNotificationCoordinator {
     }
 
     if (!diagnostics.isScheduleAligned) {
+      if (diagnostics.usedExactSourceComparison) {
+        return 'La agenda del dispositivo no coincide todavia con lo que Ritual espera. Faltan ${diagnostics.missingDeviceNotificationsCount} y sobran ${diagnostics.unexpectedDeviceNotificationsCount}. Usa "Reagendar" si acabas de editar bloques o eventos.';
+      }
+
       return 'La agenda del dispositivo no coincide todavia con lo que Ritual espera. Usa "Reagendar" si acabas de editar bloques o eventos.';
     }
 

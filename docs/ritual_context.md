@@ -8,17 +8,17 @@ Se recomienda mantener este documento actualizado cada vez que cierres una sesio
 
 Progreso estimado actual del producto:
 
-`90%`
+`93%`
 
 Barra de avance:
 
-`[------------------] 90% completado`
+`[-------------------] 93% completado`
 
 Lectura practica:
 
 - base y MVP serio: ya estan bastante solidos
 - producto pulido y mas completo: todavia queda trabajo relevante
-- falta aproximada: `10%`
+- falta aproximada: `7%`
 
 Como actualizar este porcentaje:
 
@@ -167,6 +167,9 @@ Al momento de escribir este archivo, esto ya existe y funciona:
 - diagnostico visible en la pantalla principal
 - prueba manual de notificacion
 - reagendado de recordatorios desde la UI
+- comparacion exacta entre agenda esperada y agenda real del dispositivo
+- vista `Ver agenda` para inspeccionar recordatorios esperados
+- intento silencioso de auto-reparacion cuando la agenda queda desalineada
 - soporte web limitado: conserva la preferencia, pero no agenda notificaciones locales
 
 ### Respaldo y continuidad
@@ -219,6 +222,7 @@ Lo mas importante que sigue pendiente, en terminos practicos, es esto:
 ### Prioridad alta
 
 - seguir estabilizando las notificaciones reales en Android y dispositivo
+- validar en Android real la nueva comparacion exacta y el auto-healing de la agenda
 - pulir mas la experiencia de eventos puntuales por fecha
 - seguir fortaleciendo la gestion de rutinas por periodo
 - seguir enriqueciendo estadisticas y lectura historica del sistema
@@ -244,7 +248,7 @@ Lo mas importante que sigue pendiente, en terminos practicos, es esto:
 
 Si otra persona o un futuro hilo retoma el proyecto, el orden recomendado es:
 
-1. estabilizar notificaciones reales en Android y validar mejor permisos, reagendado y prueba en dispositivo
+1. validar en Android real el nuevo flujo de notificaciones con agenda exacta, auto-reparacion y diagnostico
 2. seguir enriqueciendo eventos puntuales por fecha
 3. reforzar tests de flujos completos en agenda, backup y notificaciones
 4. mejorar la estructura interna del proyecto para que `TodayPage` no concentre tanta logica
@@ -403,7 +407,7 @@ Por ahora esto no forma parte del comportamiento base. Se mantiene como explorac
 
 Si otro hilo retoma el proyecto despues de este punto, el siguiente paso natural puede ser uno de estos:
 
-1. estabilizar y validar notificaciones reales en Android
+1. validar en Android real la agenda exacta de notificaciones y su auto-reparacion
 2. seguir mejorando los eventos puntuales por fecha
 3. reforzar tests de flujos completos
 4. llevar el respaldo a una experiencia de archivo mas directa si hace falta
@@ -420,6 +424,9 @@ En la sesion actual se reforzo especialmente:
 - mejor separacion visual entre rutina base y eventos puntuales en el detalle de fecha
 - exportacion/importacion de biblioteca en CSV compatible con Excel
 - backup completo de la app en JSON versionado
+- comparacion exacta de notificaciones esperadas vs pendientes en dispositivo
+- vista `Ver agenda` para inspeccionar recordatorios esperados
+- segundo intento silencioso de resincronizacion cuando la agenda sigue desalineada
 
 La intencion de producto en este punto es:
 

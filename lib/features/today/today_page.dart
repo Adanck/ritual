@@ -768,7 +768,39 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       anchorDate: todayDate,
       horizonDays: appSettings.notificationHorizonDays,
     );
-    await refreshNotificationDiagnostics(previewEntries: previewEntries);
+
+    var diagnostics = await loadNotificationDiagnostics(
+      previewEntries: previewEntries,
+    );
+
+    if (TodayNotificationCoordinator.shouldAttemptAutoRepair(diagnostics)) {
+      // Caso borde: justo despues de programar, algunos plugins tardan un poco
+      // en reflejar la agenda pendiente. Damos una segunda lectura breve antes
+      // de decidir que realmente falta reparar.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      diagnostics = await loadNotificationDiagnostics(
+        previewEntries: previewEntries,
+      );
+
+      if (TodayNotificationCoordinator.shouldAttemptAutoRepair(diagnostics)) {
+        await NotificationService.syncScheduledNotifications(
+          routines: routines,
+          dailyRecords: dailyRecords,
+          datedBlocks: datedBlocks,
+          activeRoutineId: activeRoutine?.id,
+          anchorDate: todayDate,
+          horizonDays: appSettings.notificationHorizonDays,
+        );
+        diagnostics = await loadNotificationDiagnostics(
+          previewEntries: previewEntries,
+        );
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      notificationDiagnostics = diagnostics;
+    });
   }
 
   /// Lee el estado actual de permisos y cantidad de recordatorios agendados.
@@ -779,14 +811,22 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   Future<void> refreshNotificationDiagnostics({
     List<NotificationPreviewEntry>? previewEntries,
   }) async {
-    final diagnostics = await TodayNotificationCoordinator.refreshDiagnostics(
-      previewEntries: previewEntries ?? notificationPreviewEntries,
+    final diagnostics = await loadNotificationDiagnostics(
+      previewEntries: previewEntries,
     );
 
     if (!mounted) return;
     setState(() {
       notificationDiagnostics = diagnostics;
     });
+  }
+
+  Future<NotificationDiagnostics> loadNotificationDiagnostics({
+    List<NotificationPreviewEntry>? previewEntries,
+  }) {
+    return TodayNotificationCoordinator.refreshDiagnostics(
+      previewEntries: previewEntries ?? notificationPreviewEntries,
+    );
   }
 
   /// Solicita permisos de notificacion desde la UI y refresca el diagnostico.
@@ -859,6 +899,40 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(result.message)),
+    );
+  }
+
+  /// Abre una hoja con la agenda concreta que Ritual espera tener programada.
+  ///
+  /// Regla: antes de abrirla refrescamos el diagnostico para comparar la vista
+  /// esperada contra el estado real del dispositivo lo mas cerca posible.
+  Future<void> openNotificationAgendaSheet() async {
+    if (!NotificationService.supportsLocalNotifications) return;
+
+    final previewEntries = notificationPreviewEntries;
+    await refreshNotificationDiagnostics(previewEntries: previewEntries);
+    if (!mounted) return;
+
+    final deviceSourceKeys = notificationDiagnostics.deviceScheduledSourceKeys.toSet();
+    final agendaItems = previewEntries.map((entry) {
+      return NotificationAgendaItemData(
+        sourceKey: entry.sourceKey,
+        title: entry.title,
+        body: entry.body,
+        when: entry.when,
+        isPresentOnDevice: deviceSourceKeys.contains(entry.sourceKey),
+      );
+    }).toList();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) {
+        return TodayNotificationAgendaSheet(
+          items: agendaItems,
+          formatWhen: formatNotificationWhen,
+        );
+      },
     );
   }
 
@@ -4269,6 +4343,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       statusDescription: notificationStatusDescription,
       formatWhen: formatNotificationWhen,
       isActionInProgress: isNotificationActionInProgress,
+      onOpenAgenda: openNotificationAgendaSheet,
       onReviewPermissions: requestNotificationPermissionsFromUi,
       onResync: resyncNotificationsFromUi,
       onSendTest: sendTestNotificationFromUi,

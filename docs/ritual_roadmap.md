@@ -13,15 +13,15 @@ Este documento convierte la vision del producto en una secuencia concreta de tra
 
 Estado estimado actual del proyecto:
 
-`90%`
+`93%`
 
 Barra de avance:
 
-`[------------------] 90% completado`
+`[-------------------] 93% completado`
 
 Falta aproximada:
 
-`10%`
+`7%`
 
 Regla de actualizacion:
 
@@ -396,11 +396,11 @@ Commit sugerido:
 
 El siguiente orden es el que recomiendo para no abrir demasiados frentes a la vez:
 
-1. fortalecer las notificaciones reales en dispositivo
+1. validar en Android real la agenda exacta de notificaciones y cerrar los casos borde
 2. seguir mejorando los eventos puntuales por fecha
-3. mejorar el modelo de tiempo
-4. reforzar tests sobre calendario, eventos y notificaciones
-5. seguir ordenando la arquitectura para que `TodayPage` no concentre tanto estado
+3. reforzar tests sobre calendario, backup y notificaciones
+4. seguir ordenando la arquitectura para que `TodayPage` no concentre tanto estado
+5. decidir si el siguiente salto de continuidad sera archivo Excel real o sincronizacion
 
 ## Convencion sugerida para estados
 
@@ -443,15 +443,20 @@ Ya quedaron implementadas estas capacidades del roadmap:
 - bloques puntuales por fecha con soporte para eventos y recordatorios
 - edicion y eliminacion de eventos puntuales desde el detalle de fecha
 - base de notificaciones locales con diagnostico, reagendado y prueba manual
+- comparacion exacta entre agenda esperada y agenda real de notificaciones
+- vista `Ver agenda` para inspeccionar recordatorios esperados
+- intento silencioso de auto-reparacion cuando la agenda queda desalineada
 - mejora del modelo de tiempo a minutos desde medianoche
 - gestion de rutinas por periodo mas rica
 - estadisticas enriquecidas por rutina
 - pantalla dedicada de estadisticas
 - pantalla de ajustes base
+- exportacion/importacion de biblioteca en CSV compatible con Excel
+- backup completo de la app en JSON versionado
 
 Siguiente bloque recomendado:
 
-1. seguir validando notificaciones reales en Android y cerrar los casos borde
+1. validar en Android real la agenda exacta de notificaciones y cerrar los casos borde
 2. enriquecer aun mas los eventos puntuales de calendario
 3. reforzar tests de flujos completos
 4. seguir puliendo gestion de rutinas por periodo y agenda real
