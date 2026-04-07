@@ -259,7 +259,9 @@ class NotificationService {
 
     for (final entry in datedBlocks) {
       final block = entry.block;
-      if (!block.receivesPushNotification) continue;
+      // Regla: si un evento puntual ya esta marcado como hecho, no dejamos un
+      // recordatorio futuro colgado para algo que el usuario ya resolvio.
+      if (!block.receivesPushNotification || block.isDone) continue;
 
       addEntry(
         sourceKey: 'dated:${entry.dateKey}:${block.id}',
@@ -281,7 +283,9 @@ class NotificationService {
 
       if (offset == 0 && todaysRecord != null) {
         for (final block in todaysRecord.blocks) {
-          if (!block.receivesPushNotification) continue;
+          // Caso borde: el registro real de hoy puede tener checks hechos. Si
+          // ya se completo el bloque, no conviene recordarlo otra vez.
+          if (!block.receivesPushNotification || block.isDone) continue;
 
           addEntry(
             sourceKey: 'record:${todaysRecord.routineId}:$dateKey:${block.id}',

@@ -19,6 +19,8 @@ import 'package:ritual/data/services/storage_service.dart';
 import 'package:ritual/features/settings/settings_page.dart';
 import 'package:ritual/features/stats/stats_page.dart';
 import 'package:ritual/shared/widgets/today_calendar_widgets.dart';
+import 'package:ritual/shared/widgets/today_home_widgets.dart';
+import 'package:ritual/shared/widgets/today_routine_widgets.dart';
 import 'package:ritual/shared/widgets/time_block.dart';
 
 /// Resultado del formulario de rutina.
@@ -792,6 +794,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     final result = await TodayNotificationCoordinator.requestPermissions(
       syncNotifications: syncNotificationsWithStoredState,
+      getPreviewEntries: () => notificationPreviewEntries,
     );
 
     if (!mounted) return;
@@ -817,6 +820,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
     final result = await TodayNotificationCoordinator.resync(
       syncNotifications: syncNotificationsWithStoredState,
+      getPreviewEntries: () => notificationPreviewEntries,
     );
 
     if (!mounted) return;
@@ -838,7 +842,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       isNotificationActionInProgress = true;
     });
 
-    final result = await TodayNotificationCoordinator.sendTestNotification();
+    final result = await TodayNotificationCoordinator.sendTestNotification(
+      getPreviewEntries: () => notificationPreviewEntries,
+    );
 
     if (!mounted) return;
     setState(() {
@@ -3925,195 +3931,83 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     required void Function(Routine routine) onDuplicate,
     required void Function(Routine routine) onDelete,
   }) {
-    final theme = Theme.of(context);
-
     if (routinesInSection.isEmpty) {
       return const SizedBox.shrink();
     }
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            description,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: Colors.white70,
-            ),
-          ),
-          const SizedBox(height: 10),
-          ...routinesInSection.map((routine) {
-            final scheduleStatus = buildRoutineScheduleStatus(routine);
-            final isSelected = routine.id == activeRoutine?.id;
-            final daysUntilStart = routine.schedule.daysUntilStart(todayDate);
-            final daysUntilEnd = routine.schedule.daysUntilEnd(todayDate);
-            final insights = getRoutineInsights(routine);
-            final routineHint = buildRoutineManagementHint(routine, insights);
+    return TodayRoutineManagerSection(
+      title: title,
+      description: description,
+      children: routinesInSection.map((routine) {
+        final scheduleStatus = buildRoutineScheduleStatus(routine);
+        final isSelected = routine.id == activeRoutine?.id;
+        final daysUntilStart = routine.schedule.daysUntilStart(todayDate);
+        final daysUntilEnd = routine.schedule.daysUntilEnd(todayDate);
+        final insights = getRoutineInsights(routine);
+        final routineHint = buildRoutineManagementHint(routine, insights);
+        final periodHintLabel = [
+          if (daysUntilStart != null) 'Empieza en $daysUntilStart dias',
+          if (daysUntilEnd != null) 'Termina en $daysUntilEnd dias',
+        ].join(' | ');
 
-            return Card(
-              margin: const EdgeInsets.only(bottom: 10),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            routine.name,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        if (isSelected)
-                          Icon(
-                            Icons.check_circle_rounded,
-                            color: theme.colorScheme.primary,
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        Chip(
-                          avatar: const Icon(Icons.view_list_rounded, size: 18),
-                          label: Text('${routine.blocks.length} bloques'),
-                        ),
-                        Chip(
-                          avatar: const Icon(Icons.date_range_rounded, size: 18),
-                          label: Text(routine.schedule.shortLabel),
-                        ),
-                        Chip(
-                          backgroundColor: scheduleStatus.color.withValues(
-                            alpha: 0.14,
-                          ),
-                          side: BorderSide(
-                            color: scheduleStatus.color.withValues(alpha: 0.24),
-                          ),
-                          avatar: Icon(
-                            Icons.schedule_rounded,
-                            size: 18,
-                            color: scheduleStatus.color,
-                          ),
-                          label: Text(scheduleStatus.label),
-                        ),
-                        Chip(
-                          avatar: const Icon(
-                            Icons.local_fire_department_outlined,
-                            size: 18,
-                          ),
-                          label: Text('Racha ${insights.currentStreak}'),
-                        ),
-                        Chip(
-                          avatar: const Icon(Icons.show_chart_rounded, size: 18),
-                          label: Text('7d ${formatPercentValue(insights.weeklyCompletionRate)}'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      routine.schedule.displayLabel,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: Colors.white70,
-                      ),
-                    ),
-                    if (daysUntilStart != null || daysUntilEnd != null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        [
-                          if (daysUntilStart != null)
-                            'Empieza en $daysUntilStart dias',
-                          if (daysUntilEnd != null)
-                            'Termina en $daysUntilEnd dias',
-                        ].join(' | '),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: Colors.white54,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    Text(
-                      routineHint,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: Colors.white70,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        buildInsightChip(
-                          context: context,
-                          icon: Icons.task_alt_outlined,
-                          label: 'completos',
-                          value:
-                              '${insights.completedDays}/${insights.trackedDays}',
-                        ),
-                        buildInsightChip(
-                          context: context,
-                          icon: Icons.percent_rounded,
-                          label: '30d',
-                          value: formatPercentValue(
-                            insights.monthlyCompletionRate,
-                          ),
-                        ),
-                        buildInsightChip(
-                          context: context,
-                          icon: Icons.checklist_rounded,
-                          label: 'bloques',
-                          value:
-                              '${insights.progressBlocksCompleted}/${insights.progressBlocksTracked}',
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        FilledButton.tonalIcon(
-                          onPressed: () => onSelect(routine),
-                          icon: const Icon(Icons.playlist_add_check_rounded),
-                          label: Text(isSelected ? 'Activa' : 'Usar'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: () => onEdit(routine),
-                          icon: const Icon(Icons.edit_note_rounded),
-                          label: const Text('Editar'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: () => onDuplicate(routine),
-                          icon: const Icon(Icons.copy_rounded),
-                          label: const Text('Duplicar'),
-                        ),
-                        if (routines.length > 1)
-                          OutlinedButton.icon(
-                            onPressed: () => onDelete(routine),
-                            icon: const Icon(Icons.delete_outline_rounded),
-                            label: const Text('Eliminar'),
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
+        return TodayRoutineManagerCard(
+          name: routine.name,
+          isSelected: isSelected,
+          scheduleShortLabel: routine.schedule.shortLabel,
+          scheduleDisplayLabel: routine.schedule.displayLabel,
+          scheduleStatusLabel: scheduleStatus.label,
+          scheduleStatusColor: scheduleStatus.color,
+          blocksCount: routine.blocks.length,
+          periodHintLabel: periodHintLabel.isEmpty ? null : periodHintLabel,
+          routineHint: routineHint,
+          metricChips: [
+            buildInsightChip(
+              context: context,
+              icon: Icons.task_alt_outlined,
+              label: 'completos',
+              value: '${insights.completedDays}/${insights.trackedDays}',
+            ),
+            buildInsightChip(
+              context: context,
+              icon: Icons.percent_rounded,
+              label: '30d',
+              value: formatPercentValue(
+                insights.monthlyCompletionRate,
               ),
-            );
-          }),
-        ],
-      ),
+            ),
+            buildInsightChip(
+              context: context,
+              icon: Icons.checklist_rounded,
+              label: 'bloques',
+              value:
+                  '${insights.progressBlocksCompleted}/${insights.progressBlocksTracked}',
+            ),
+          ],
+          actionButtons: [
+            FilledButton.tonalIcon(
+              onPressed: () => onSelect(routine),
+              icon: const Icon(Icons.playlist_add_check_rounded),
+              label: Text(isSelected ? 'Activa' : 'Usar'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => onEdit(routine),
+              icon: const Icon(Icons.edit_note_rounded),
+              label: const Text('Editar'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => onDuplicate(routine),
+              icon: const Icon(Icons.copy_rounded),
+              label: const Text('Duplicar'),
+            ),
+            if (routines.length > 1)
+              OutlinedButton.icon(
+                onPressed: () => onDelete(routine),
+                icon: const Icon(Icons.delete_outline_rounded),
+                label: const Text('Eliminar'),
+              ),
+          ],
+        );
+      }).toList(),
     );
   }
 
@@ -4241,6 +4135,38 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 
+  /// Alterna el estado completado de un evento puntual sin tocar la rutina.
+  ///
+  /// Regla: al marcarlo como hecho tambien resincronizamos notificaciones para
+  /// evitar recordatorios de algo que ya se resolvio.
+  Future<void> toggleDatedBlockEntryCompletion(DatedBlockEntry entry) async {
+    final updatedBlock = entry.block.copyWith(isDone: !entry.block.isDone);
+    final updatedBlocks = getDatedBlocksForDate(entry.dateKey)
+        .map((datedEntry) =>
+            datedEntry.block.id == entry.block.id ? updatedBlock : datedEntry.block)
+        .toList();
+    final sortedBlocks = DayBlockCollectionUtils.sortChronologically(updatedBlocks);
+
+    setState(() {
+      datedBlocks.removeWhere((datedEntry) => datedEntry.dateKey == entry.dateKey);
+      datedBlocks.addAll(
+        sortedBlocks.map(
+          (block) => DatedBlockEntry(
+            dateKey: entry.dateKey,
+            block: block,
+          ),
+        ),
+      );
+    });
+
+    await saveDatedBlocksAndRefresh();
+    showFeedbackMessage(
+      updatedBlock.isDone
+          ? 'Evento puntual marcado como completado.'
+          : 'Evento puntual reabierto.',
+    );
+  }
+
   Widget buildNotificationStatusCard({
     required BuildContext context,
     required int pushEnabledBlocksCount,
@@ -4305,12 +4231,33 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                     '${notificationDiagnostics.scheduledNotificationsCount} programadas',
                   ),
                 ),
+              if (notificationDiagnostics.supportsLocalNotifications)
+                Chip(
+                  avatar: const Icon(Icons.phone_android_rounded, size: 18),
+                  label: Text(
+                    '${notificationDiagnostics.pendingDeviceNotificationsCount} en dispositivo',
+                  ),
+                ),
               if (notificationDiagnostics.supportsLocalNotifications &&
                   notificationDiagnostics.scheduledDatedNotificationsCount > 0)
                 Chip(
                   avatar: const Icon(Icons.event_available_rounded, size: 18),
                   label: Text(
                     '${notificationDiagnostics.scheduledDatedNotificationsCount} puntuales',
+                  ),
+                ),
+              if (notificationDiagnostics.supportsLocalNotifications)
+                Chip(
+                  avatar: Icon(
+                    notificationDiagnostics.isScheduleAligned
+                        ? Icons.verified_rounded
+                        : Icons.sync_problem_rounded,
+                    size: 18,
+                  ),
+                  label: Text(
+                    notificationDiagnostics.isScheduleAligned
+                        ? 'Agenda alineada'
+                        : 'Agenda por revisar',
                   ),
                 ),
             ],
@@ -4344,6 +4291,15 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ],
+          if (notificationDiagnostics.lastRefreshedAt != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Ultima revision: ${formatNotificationWhen(notificationDiagnostics.lastRefreshedAt!)}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.white54,
               ),
             ),
           ],
@@ -4401,6 +4357,10 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           case 'open':
             await onOpenDateDetails();
             break;
+          case 'toggle':
+            await toggleDatedBlockEntryCompletion(entry);
+            await onOpenDateDetails();
+            break;
           case 'edit':
             await editDatedBlockEntry(entry);
             await onOpenDateDetails();
@@ -4421,10 +4381,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
             break;
         }
       },
-      itemBuilder: (context) => const [
+      itemBuilder: (context) => [
         PopupMenuItem(
           value: 'open',
           child: Text('Abrir fecha'),
+        ),
+        PopupMenuItem(
+          value: 'toggle',
+          child: Text(entry.block.isDone ? 'Marcar pendiente' : 'Marcar hecho'),
         ),
         PopupMenuItem(
           value: 'edit',
@@ -4453,146 +4417,16 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     required List<DatedBlockEntry> entries,
     required Set<String> scheduledNotificationSourceKeys,
   }) {
-    final theme = Theme.of(context);
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFF7A6B).withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFFF7A6B).withValues(alpha: 0.18),
-        ),
+    return TodayUpcomingDatedEventsCard(
+      todayDate: todayDate,
+      dateLabelBuilder: buildDatedEntryDateLabel,
+      entries: entries,
+      scheduledNotificationSourceKeys: scheduledNotificationSourceKeys,
+      actionsBuilder: (entry) => buildDatedEntryActionsMenu(
+        entry: entry,
+        onOpenDateDetails: () => showCalendarDateDetails(DateKey.toDate(entry.dateKey)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Proximos eventos puntuales',
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Bloques aislados por fecha que no modifican tu rutina base.',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: Colors.white70,
-            ),
-          ),
-          const SizedBox(height: 12),
-          ...entries.map((entry) {
-            final isTodayEvent = entry.dateKey == todayKey;
-
-            return Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.04),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.05),
-                ),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF7A6B).withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.event_available_rounded,
-                      color: Color(0xFFFF7A6B),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          entry.block.title,
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${isTodayEvent ? 'Hoy' : buildDatedEntryDateLabel(entry)} | ${entry.block.start} - ${entry.block.end}',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: Colors.white70,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            Chip(
-                              visualDensity: VisualDensity.compact,
-                              avatar: const Icon(Icons.event_note_rounded, size: 16),
-                              label: Text(buildDatedEntryDateLabel(entry)),
-                            ),
-                            if (entry.block.receivesPushNotification)
-                              Chip(
-                                visualDensity: VisualDensity.compact,
-                                avatar: Icon(
-                                  scheduledNotificationSourceKeys.contains(
-                                    buildDatedEntryNotificationSourceKey(entry),
-                                  )
-                                      ? Icons.notifications_active_rounded
-                                      : Icons.notifications_paused_rounded,
-                                  size: 16,
-                                ),
-                                label: Text(
-                                  scheduledNotificationSourceKeys.contains(
-                                    buildDatedEntryNotificationSourceKey(entry),
-                                  )
-                                      ? 'Push programado'
-                                      : 'Push pendiente',
-                                ),
-                              ),
-                            if (entry.block.isDone)
-                              const Chip(
-                                visualDensity: VisualDensity.compact,
-                                avatar: Icon(Icons.task_alt_rounded, size: 16),
-                                label: Text('Hecho'),
-                              ),
-                          ],
-                        ),
-                        if (entry.block.description.trim().isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            entry.block.description,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.white60,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  buildDatedEntryActionsMenu(
-                    entry: entry,
-                    onOpenDateDetails: () =>
-                        showCalendarDateDetails(DateKey.toDate(entry.dateKey)),
-                  ),
-                ],
-              ),
-            );
-          }),
-          OutlinedButton.icon(
-            onPressed: showCalendarHistorySheet,
-            icon: const Icon(Icons.calendar_month_rounded),
-            label: const Text('Ver calendario'),
-          ),
-        ],
-      ),
+      onOpenCalendar: showCalendarHistorySheet,
     );
   }
 
@@ -4628,6 +4462,43 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final progressDescription = progressBlocks.isEmpty
         ? 'Aun no hay bloques que cuenten para el progreso.'
         : '$completed de ${progressBlocks.length} bloques cuentan para progreso.';
+    final suggestedRoutineCard = shouldOfferSuggestedRoutineSwitch
+        ? Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF4DA3FF).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: const Color(0xFF4DA3FF).withValues(alpha: 0.18),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Rutina sugerida para hoy',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '"${suggestedRoutine.name}" parece encajar mejor con la fecha de hoy. Puedes cambiarte con un toque o seguir usando la actual.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: Colors.white70,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                FilledButton.tonalIcon(
+                  onPressed: () => selectRoutine(suggestedRoutine),
+                  icon: const Icon(Icons.auto_awesome_rounded),
+                  label: Text('Usar ${suggestedRoutine.name}'),
+                ),
+              ],
+            ),
+          )
+        : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -4681,239 +4552,124 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           // Tarjeta superior con el contexto del dia y el progreso agregado.
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24),
-                gradient: LinearGradient(
-                  colors: [
-                    progressColor.withValues(alpha: 0.28),
-                    theme.colorScheme.surface,
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+            child: TodayOverviewCard(
+              progressColor: progressColor,
+              progressDescription: progressDescription,
+              headerChips: [
+                Chip(
+                  avatar: const Icon(Icons.auto_awesome_motion, size: 18),
+                  label: Text(activeRoutine!.name),
                 ),
-                border: Border.all(
-                  color: progressColor.withValues(alpha: 0.24),
+                Chip(
+                  avatar: const Icon(Icons.view_list_rounded, size: 18),
+                  label: Text('${blocks.length} bloques'),
                 ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Progreso del dia',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                Chip(
+                  avatar: const Icon(Icons.date_range_rounded, size: 18),
+                  label: Text(activeRoutine!.schedule.shortLabel),
+                ),
+                if (!isScheduledToday)
+                  Chip(
+                    avatar: const Icon(Icons.watch_later_outlined, size: 18),
+                    label: const Text('Fuera del rango sugerido'),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    progressDescription,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: Colors.white70,
-                    ),
+                if (nonProgressBlocksCount > 0)
+                  Chip(
+                    avatar: const Icon(Icons.visibility_outlined, size: 18),
+                    label: Text('$nonProgressBlocksCount informativos'),
                   ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      Chip(
-                        avatar: const Icon(Icons.auto_awesome_motion, size: 18),
-                        label: Text(activeRoutine!.name),
-                      ),
-                      Chip(
-                        avatar: const Icon(Icons.view_list_rounded, size: 18),
-                        label: Text('${blocks.length} bloques'),
-                      ),
-                      Chip(
-                        avatar: const Icon(Icons.date_range_rounded, size: 18),
-                        label: Text(activeRoutine!.schedule.shortLabel),
-                      ),
-                      if (!isScheduledToday)
-                        Chip(
-                          avatar:
-                              const Icon(Icons.watch_later_outlined, size: 18),
-                          label: const Text('Fuera del rango sugerido'),
-                        ),
-                      if (nonProgressBlocksCount > 0)
-                        Chip(
-                          avatar: const Icon(Icons.visibility_outlined, size: 18),
-                          label: Text('$nonProgressBlocksCount informativos'),
-                        ),
-                      if (pushEnabledBlocksCount > 0)
-                        Chip(
-                          avatar: const Icon(
-                            Icons.notifications_active_outlined,
-                            size: 18,
-                          ),
-                          label: Text('$pushEnabledBlocksCount con push'),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    activeRoutine!.schedule.displayLabel,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: Colors.white70,
+                if (pushEnabledBlocksCount > 0)
+                  Chip(
+                    avatar: const Icon(
+                      Icons.notifications_active_outlined,
+                      size: 18,
                     ),
+                    label: Text('$pushEnabledBlocksCount con push'),
                   ),
-                  if (routineNotices.isNotEmpty) ...[
-                    const SizedBox(height: 14),
-                    ...routineNotices.map(
-                      (notice) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: buildRoutineNoticeCard(
-                          context: context,
-                          notice: notice,
-                        ),
-                      ),
+              ],
+              scheduleLabel: activeRoutine!.schedule.displayLabel,
+              noticeCards: routineNotices
+                  .map(
+                    (notice) => buildRoutineNoticeCard(
+                      context: context,
+                      notice: notice,
                     ),
-                  ],
-                  if (pushEnabledBlocksCount > 0) ...[
-                    const SizedBox(height: 6),
-                    buildNotificationStatusCard(
+                  )
+                  .toList(),
+              notificationCard: pushEnabledBlocksCount > 0
+                  ? buildNotificationStatusCard(
                       context: context,
                       pushEnabledBlocksCount: pushEnabledBlocksCount,
-                    ),
-                  ],
-                  if (shouldOfferSuggestedRoutineSwitch) ...[
-                    const SizedBox(height: 6),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF4DA3FF).withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: const Color(0xFF4DA3FF).withValues(alpha: 0.18),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Rutina sugerida para hoy',
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '"${suggestedRoutine.name}" parece encajar mejor con la fecha de hoy. Puedes cambiarte con un toque o seguir usando la actual.',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.white70,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          FilledButton.tonalIcon(
-                            onPressed: () => selectRoutine(suggestedRoutine),
-                            icon: const Icon(Icons.auto_awesome_rounded),
-                            label: Text('Usar ${suggestedRoutine.name}'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  if (upcomingDatedEntries.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    buildUpcomingDatedEventsCard(
+                    )
+                  : null,
+              suggestedRoutineCard: suggestedRoutineCard,
+              upcomingEventsCard: upcomingDatedEntries.isNotEmpty
+                  ? buildUpcomingDatedEventsCard(
                       context: context,
                       entries: upcomingDatedEntries,
                       scheduledNotificationSourceKeys:
                           scheduledNotificationSourceKeys,
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  TweenAnimationBuilder<double>(
-                    tween: Tween<double>(begin: 0, end: progress),
-                    duration: const Duration(milliseconds: 500),
-                    curve: Curves.easeOut,
-                    builder: (context, value, _) {
-                      return ClipRRect(
-                        borderRadius: BorderRadius.circular(999),
-                        child: LinearProgressIndicator(
-                          value: value,
-                          minHeight: 12,
-                          valueColor: AlwaysStoppedAnimation<Color>(progressColor),
-                          backgroundColor: Colors.white12,
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      buildInsightChip(
-                        context: context,
-                        icon: Icons.local_fire_department_outlined,
-                        label: 'racha',
-                        value: '${insights.currentStreak}',
-                      ),
-                      buildInsightChip(
-                        context: context,
-                        icon: Icons.workspace_premium_outlined,
-                        label: 'mejor racha',
-                        value: '${insights.bestStreak}',
-                      ),
-                      buildInsightChip(
-                        context: context,
-                        icon: Icons.calendar_today_outlined,
-                        label: 'd\u00EDas activos',
-                        value: '${insights.activeDays}',
-                      ),
-                      buildInsightChip(
-                        context: context,
-                        icon: Icons.percent_rounded,
-                        label: 'cumplimiento',
-                        value: formatPercentValue(insights.completionRate),
-                      ),
-                      buildInsightChip(
-                        context: context,
-                        icon: Icons.task_alt_outlined,
-                        label: 'bloques',
-                        value: '${insights.completedBlocks}',
-                      ),
-                      buildInsightChip(
-                        context: context,
-                        icon: Icons.calendar_view_week_outlined,
-                        label: '7d',
-                        value: formatPercentValue(insights.weeklyCompletionRate),
-                      ),
-                      buildInsightChip(
-                        context: context,
-                        icon: Icons.calendar_month_outlined,
-                        label: '30d',
-                        value: formatPercentValue(insights.monthlyCompletionRate),
-                      ),
-                      buildInsightChip(
-                        context: context,
-                        icon: Icons.verified_outlined,
-                        label: 'dias completos',
-                        value:
-                            '${insights.completedDays}/${insights.trackedDays}',
-                      ),
-                      buildInsightChip(
-                        context: context,
-                        icon: Icons.av_timer_rounded,
-                        label: 'progreso',
-                        value:
-                            '${insights.progressBlocksCompleted}/${insights.progressBlocksTracked}',
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    buildLastActiveLabel(insights),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: Colors.white54,
-                    ),
-                  ),
-                ],
-              ),
+                    )
+                  : null,
+              progress: progress,
+              insightChips: [
+                buildInsightChip(
+                  context: context,
+                  icon: Icons.local_fire_department_outlined,
+                  label: 'racha',
+                  value: '${insights.currentStreak}',
+                ),
+                buildInsightChip(
+                  context: context,
+                  icon: Icons.workspace_premium_outlined,
+                  label: 'mejor racha',
+                  value: '${insights.bestStreak}',
+                ),
+                buildInsightChip(
+                  context: context,
+                  icon: Icons.calendar_today_outlined,
+                  label: 'd\u00EDas activos',
+                  value: '${insights.activeDays}',
+                ),
+                buildInsightChip(
+                  context: context,
+                  icon: Icons.percent_rounded,
+                  label: 'cumplimiento',
+                  value: formatPercentValue(insights.completionRate),
+                ),
+                buildInsightChip(
+                  context: context,
+                  icon: Icons.task_alt_outlined,
+                  label: 'bloques',
+                  value: '${insights.completedBlocks}',
+                ),
+                buildInsightChip(
+                  context: context,
+                  icon: Icons.calendar_view_week_outlined,
+                  label: '7d',
+                  value: formatPercentValue(insights.weeklyCompletionRate),
+                ),
+                buildInsightChip(
+                  context: context,
+                  icon: Icons.calendar_month_outlined,
+                  label: '30d',
+                  value: formatPercentValue(insights.monthlyCompletionRate),
+                ),
+                buildInsightChip(
+                  context: context,
+                  icon: Icons.verified_outlined,
+                  label: 'dias completos',
+                  value: '${insights.completedDays}/${insights.trackedDays}',
+                ),
+                buildInsightChip(
+                  context: context,
+                  icon: Icons.av_timer_rounded,
+                  label: 'progreso',
+                  value:
+                      '${insights.progressBlocksCompleted}/${insights.progressBlocksTracked}',
+                ),
+              ],
+              lastActiveLabel: buildLastActiveLabel(insights),
             ),
           ),
           // Cuerpo principal: lista de bloques o estado vacio si la rutina aun

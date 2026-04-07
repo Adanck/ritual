@@ -149,4 +149,88 @@ void main() {
       isNotEmpty,
     );
   });
+
+  test('buildPreviewEntries omite bloques ya completados del dia y puntuales hechos', () {
+    final routines = [
+      Routine(
+        id: 'normal',
+        name: 'Normal',
+        isActive: true,
+        blocks: [
+          DayBlock(
+            id: 'future-routine',
+            start: '11:00',
+            end: '11:30',
+            title: 'Futuro',
+            type: BlockType.habit,
+            receivesPushNotification: true,
+          ),
+        ],
+      ),
+    ];
+
+    final dailyRecords = [
+      DailyRecord(
+        dateKey: '2026-04-06',
+        routineId: 'normal',
+        routineName: 'Normal',
+        blocks: [
+          DayBlock(
+            id: 'done-today',
+            start: '09:00',
+            end: '09:30',
+            title: 'Ya hecho',
+            type: BlockType.habit,
+            receivesPushNotification: true,
+            isDone: true,
+          ),
+          DayBlock(
+            id: 'pending-today',
+            start: '10:00',
+            end: '10:30',
+            title: 'Pendiente',
+            type: BlockType.habit,
+            receivesPushNotification: true,
+          ),
+        ],
+      ),
+    ];
+
+    final datedBlocks = [
+      DatedBlockEntry(
+        dateKey: '2026-04-07',
+        block: DayBlock(
+          id: 'dated-done',
+          start: '07:00',
+          end: '07:30',
+          title: 'Evento hecho',
+          type: BlockType.event,
+          receivesPushNotification: true,
+          isDone: true,
+        ),
+      ),
+    ];
+
+    final previewEntries = NotificationService.buildPreviewEntries(
+      routines: routines,
+      dailyRecords: dailyRecords,
+      datedBlocks: datedBlocks,
+      activeRoutineId: 'normal',
+      anchorDate: DateTime(2026, 4, 6, 8, 0),
+      horizonDays: 1,
+    );
+
+    expect(
+      previewEntries.where((entry) => entry.sourceKey.contains('done-today')),
+      isEmpty,
+    );
+    expect(
+      previewEntries.where((entry) => entry.sourceKey.contains('dated-done')),
+      isEmpty,
+    );
+    expect(
+      previewEntries.where((entry) => entry.sourceKey.contains('pending-today')),
+      isNotEmpty,
+    );
+  });
 }

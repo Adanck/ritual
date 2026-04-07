@@ -40,17 +40,22 @@ class TodayNotificationCoordinator {
       supportsLocalNotifications: true,
       notificationsEnabled: enabled,
       scheduledNotificationsCount: scheduledCount,
+      pendingDeviceNotificationsCount: pendingCount,
       scheduledDatedNotificationsCount: scheduledDatedNotificationsCount,
+      isScheduleAligned:
+          previewEntries == null ? true : pendingCount == scheduledCount,
       nextScheduledAt:
           previewEntries == null || previewEntries.isEmpty
               ? null
               : previewEntries.first.when,
+      lastRefreshedAt: DateTime.now(),
     );
   }
 
   /// Pide permisos y luego recalcula el diagnostico.
   static Future<NotificationActionResult> requestPermissions({
     required Future<void> Function() syncNotifications,
+    required List<NotificationPreviewEntry> Function() getPreviewEntries,
   }) async {
     if (!NotificationService.supportsLocalNotifications) {
       return const NotificationActionResult(
@@ -62,7 +67,9 @@ class TodayNotificationCoordinator {
 
     await NotificationService.requestPermissionsIfNeeded();
     await syncNotifications();
-    final diagnostics = await refreshDiagnostics();
+    final diagnostics = await refreshDiagnostics(
+      previewEntries: getPreviewEntries(),
+    );
 
     return NotificationActionResult(
       diagnostics: diagnostics,
@@ -75,6 +82,7 @@ class TodayNotificationCoordinator {
   /// Reagenda manualmente los recordatorios futuros y devuelve el nuevo estado.
   static Future<NotificationActionResult> resync({
     required Future<void> Function() syncNotifications,
+    required List<NotificationPreviewEntry> Function() getPreviewEntries,
   }) async {
     if (!NotificationService.supportsLocalNotifications) {
       return const NotificationActionResult(
@@ -85,7 +93,9 @@ class TodayNotificationCoordinator {
     }
 
     await syncNotifications();
-    final diagnostics = await refreshDiagnostics();
+    final diagnostics = await refreshDiagnostics(
+      previewEntries: getPreviewEntries(),
+    );
 
     return NotificationActionResult(
       diagnostics: diagnostics,
@@ -96,7 +106,9 @@ class TodayNotificationCoordinator {
   }
 
   /// Lanza una notificacion inmediata y refresca el diagnostico.
-  static Future<NotificationActionResult> sendTestNotification() async {
+  static Future<NotificationActionResult> sendTestNotification({
+    required List<NotificationPreviewEntry> Function() getPreviewEntries,
+  }) async {
     if (!NotificationService.supportsLocalNotifications) {
       return const NotificationActionResult(
         diagnostics: NotificationDiagnostics.unsupported(),
@@ -106,7 +118,9 @@ class TodayNotificationCoordinator {
     }
 
     await NotificationService.showTestNotificationNow();
-    final diagnostics = await refreshDiagnostics();
+    final diagnostics = await refreshDiagnostics(
+      previewEntries: getPreviewEntries(),
+    );
 
     return NotificationActionResult(
       diagnostics: diagnostics,
@@ -138,6 +152,10 @@ class TodayNotificationCoordinator {
 
     if (diagnostics.notificationsEnabled == false) {
       return 'Los recordatorios existen, pero el dispositivo parece tener las notificaciones desactivadas.';
+    }
+
+    if (!diagnostics.isScheduleAligned) {
+      return 'La agenda del dispositivo no coincide todavia con lo que Ritual espera. Usa "Reagendar" si acabas de editar bloques o eventos.';
     }
 
     if (diagnostics.scheduledNotificationsCount == 0) {

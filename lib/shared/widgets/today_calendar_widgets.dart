@@ -742,10 +742,24 @@ class TodayCalendarDateDetailView extends StatelessWidget {
             Text(
               '${block.start} - ${block.end}${description.isEmpty ? '' : ' | $description'}',
             ),
+            const SizedBox(height: 6),
+            Text(
+              block.isDone ? 'Estado: completado' : 'Estado: pendiente',
+              style: TextStyle(
+                color: block.isDone
+                    ? const Color(0xFF41C47B)
+                    : Colors.white70,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             if (block.receivesPushNotification) ...[
               const SizedBox(height: 6),
               Text(
-                isScheduled ? 'Push programado' : 'Push activado',
+                block.isDone
+                    ? 'Push omitido por completado'
+                    : isScheduled
+                        ? 'Push programado'
+                        : 'Push activado',
                 style: const TextStyle(
                   color: Color(0xFFFFD36C),
                   fontWeight: FontWeight.w600,
