@@ -13,15 +13,15 @@ Este documento convierte la vision del producto en una secuencia concreta de tra
 
 Estado estimado actual del proyecto:
 
-`93%`
+`97%`
 
 Barra de avance:
 
-`[-------------------] 93% completado`
+`[-------------------] 97% completado`
 
 Falta aproximada:
 
-`7%`
+`3%`
 
 Regla de actualizacion:
 
@@ -372,12 +372,20 @@ Pensada para:
 - varios dispositivos
 - futura cuenta de usuario
 
+Estado actual:
+- fuera de alcance de esta etapa
+- no se considera necesaria para el objetivo actual de app local personal en movil
+
 Commit sugerido:
 `feat: add cloud sync`
 
 ### RIT-031 Autenticacion
 
 Solo tiene sentido cuando exista una necesidad real de cuentas y sincronizacion.
+
+Estado actual:
+- fuera de alcance de esta etapa
+- no se planea login mientras Ritual siga siendo una app local sin servidor
 
 Commit sugerido:
 `feat: add user authentication`
@@ -400,7 +408,7 @@ El siguiente orden es el que recomiendo para no abrir demasiados frentes a la ve
 2. seguir mejorando los eventos puntuales por fecha
 3. reforzar tests sobre calendario, backup y notificaciones
 4. seguir ordenando la arquitectura para que `TodayPage` no concentre tanto estado
-5. decidir si el siguiente salto de continuidad sera archivo Excel real o sincronizacion
+5. decidir si el siguiente salto de continuidad sera archivo Excel real o una UX mas directa para CSV/backup
 
 ## Convencion sugerida para estados
 
@@ -453,6 +461,7 @@ Ya quedaron implementadas estas capacidades del roadmap:
 - pantalla de ajustes base
 - exportacion/importacion de biblioteca en CSV compatible con Excel
 - backup completo de la app en JSON versionado
+- senales mas claras cuando la auto-reparacion de notificaciones resolvio o no una desalineacion
 
 Siguiente bloque recomendado:
 
@@ -460,6 +469,16 @@ Siguiente bloque recomendado:
 2. enriquecer aun mas los eventos puntuales de calendario
 3. reforzar tests de flujos completos
 4. seguir puliendo gestion de rutinas por periodo y agenda real
+5. mejorar la experiencia de respaldo con archivos directos si hace falta
+
+## Alcance actual
+
+La meta actual de `Ritual` no incluye servidor.
+
+- foco principal: movil Android para uso personal
+- persistencia: local
+- continuidad: CSV compatible con Excel y backup JSON
+- fuera de alcance por ahora: sync y auth
 
 ## Idea futura anotada
 

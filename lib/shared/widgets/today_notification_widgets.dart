@@ -136,6 +136,19 @@ class TodayNotificationStatusCard extends StatelessWidget {
                         : 'Agenda por revisar',
                   ),
                 ),
+              if (diagnostics.supportsLocalNotifications &&
+                  diagnostics.autoRepairResolvedIssue)
+                const Chip(
+                  avatar: Icon(Icons.auto_fix_high_rounded, size: 18),
+                  label: Text('Auto-reparada'),
+                ),
+              if (diagnostics.supportsLocalNotifications &&
+                  diagnostics.autoRepairAttempted &&
+                  !diagnostics.autoRepairResolvedIssue)
+                const Chip(
+                  avatar: Icon(Icons.handyman_rounded, size: 18),
+                  label: Text('Auto-reparacion intentada'),
+                ),
             ],
           ),
           if (diagnostics.nextScheduledAt != null) ...[
@@ -222,11 +235,13 @@ class TodayNotificationStatusCard extends StatelessWidget {
 /// agendados coinciden con lo que el dispositivo reporta como pendiente.
 class TodayNotificationAgendaSheet extends StatelessWidget {
   final List<NotificationAgendaItemData> items;
+  final List<String> unexpectedSourceKeys;
   final String Function(DateTime value) formatWhen;
 
   const TodayNotificationAgendaSheet({
     super.key,
     required this.items,
+    this.unexpectedSourceKeys = const [],
     required this.formatWhen,
   });
 
@@ -254,6 +269,39 @@ class TodayNotificationAgendaSheet extends StatelessWidget {
                 color: Colors.white70,
               ),
             ),
+            if (unexpectedSourceKeys.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFA24D).withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: const Color(0xFFFFA24D).withValues(alpha: 0.18),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.warning_amber_rounded,
+                      color: Color(0xFFFFD36C),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'El dispositivo todavia reporta ${unexpectedSourceKeys.length} recordatorios extra que Ritual ya no espera. Usa "Reagendar" si acabas de editar o borrar bloques.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: Colors.white70,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             if (items.isEmpty)
               Container(

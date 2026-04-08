@@ -760,6 +760,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// usuario decidio en la UI.
   Future<void> syncNotificationsWithStoredState() async {
     final previewEntries = notificationPreviewEntries;
+    var autoRepairAttempted = false;
+    var autoRepairResolvedIssue = false;
+
     await NotificationService.syncScheduledNotifications(
       routines: routines,
       dailyRecords: dailyRecords,
@@ -783,6 +786,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       );
 
       if (TodayNotificationCoordinator.shouldAttemptAutoRepair(diagnostics)) {
+        autoRepairAttempted = true;
         await NotificationService.syncScheduledNotifications(
           routines: routines,
           dailyRecords: dailyRecords,
@@ -793,8 +797,23 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         );
         diagnostics = await loadNotificationDiagnostics(
           previewEntries: previewEntries,
+          autoRepairAttempted: autoRepairAttempted,
         );
+        autoRepairResolvedIssue = diagnostics.isScheduleAligned;
       }
+    }
+
+    if (autoRepairAttempted && !autoRepairResolvedIssue) {
+      diagnostics = await loadNotificationDiagnostics(
+        previewEntries: previewEntries,
+        autoRepairAttempted: true,
+      );
+    } else if (autoRepairResolvedIssue) {
+      diagnostics = await loadNotificationDiagnostics(
+        previewEntries: previewEntries,
+        autoRepairAttempted: true,
+        autoRepairResolvedIssue: true,
+      );
     }
 
     if (!mounted) return;
@@ -823,9 +842,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
 
   Future<NotificationDiagnostics> loadNotificationDiagnostics({
     List<NotificationPreviewEntry>? previewEntries,
+    bool autoRepairAttempted = false,
+    bool autoRepairResolvedIssue = false,
   }) {
     return TodayNotificationCoordinator.refreshDiagnostics(
       previewEntries: previewEntries ?? notificationPreviewEntries,
+      autoRepairAttempted: autoRepairAttempted,
+      autoRepairResolvedIssue: autoRepairResolvedIssue,
     );
   }
 
@@ -914,6 +937,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (!mounted) return;
 
     final deviceSourceKeys = notificationDiagnostics.deviceScheduledSourceKeys.toSet();
+    final expectedSourceKeys = previewEntries.map((entry) => entry.sourceKey).toSet();
     final agendaItems = previewEntries.map((entry) {
       return NotificationAgendaItemData(
         sourceKey: entry.sourceKey,
@@ -923,6 +947,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         isPresentOnDevice: deviceSourceKeys.contains(entry.sourceKey),
       );
     }).toList();
+    final unexpectedSourceKeys = deviceSourceKeys.difference(expectedSourceKeys).toList()
+      ..sort();
 
     await showModalBottomSheet<void>(
       context: context,
@@ -930,6 +956,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       builder: (_) {
         return TodayNotificationAgendaSheet(
           items: agendaItems,
+          unexpectedSourceKeys: unexpectedSourceKeys,
           formatWhen: formatNotificationWhen,
         );
       },

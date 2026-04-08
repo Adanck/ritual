@@ -43,6 +43,8 @@ class TodayNotificationCoordinator {
     required Set<String> pendingDeviceSourceKeys,
     List<NotificationPreviewEntry>? previewEntries,
     DateTime? refreshedAt,
+    bool autoRepairAttempted = false,
+    bool autoRepairResolvedIssue = false,
   }) {
     final scheduledCount = previewEntries?.length ?? pendingDeviceNotificationsCount;
     final scheduledDatedNotificationsCount =
@@ -73,6 +75,8 @@ class TodayNotificationCoordinator {
           ? missingDeviceNotificationsCount == 0 &&
               unexpectedDeviceNotificationsCount == 0
           : pendingDeviceNotificationsCount == scheduledCount,
+      autoRepairAttempted: autoRepairAttempted,
+      autoRepairResolvedIssue: autoRepairResolvedIssue,
       nextScheduledAt:
           previewEntries == null || previewEntries.isEmpty
               ? null
@@ -85,6 +89,8 @@ class TodayNotificationCoordinator {
   /// Consulta el estado actual de soporte, permisos y recordatorios futuros.
   static Future<NotificationDiagnostics> refreshDiagnostics({
     List<NotificationPreviewEntry>? previewEntries,
+    bool autoRepairAttempted = false,
+    bool autoRepairResolvedIssue = false,
   }) async {
     if (!NotificationService.supportsLocalNotifications) {
       return const NotificationDiagnostics.unsupported();
@@ -99,6 +105,8 @@ class TodayNotificationCoordinator {
       pendingDeviceNotificationsCount: pendingSnapshot.count,
       pendingDeviceSourceKeys: pendingSnapshot.ritualSourceKeys,
       previewEntries: previewEntries,
+      autoRepairAttempted: autoRepairAttempted,
+      autoRepairResolvedIssue: autoRepairResolvedIssue,
     );
   }
 
@@ -206,10 +214,17 @@ class TodayNotificationCoordinator {
 
     if (!diagnostics.isScheduleAligned) {
       if (diagnostics.usedExactSourceComparison) {
+        if (diagnostics.autoRepairAttempted) {
+          return 'Ritual intento corregir la agenda automaticamente, pero el dispositivo todavia no coincide. Faltan ${diagnostics.missingDeviceNotificationsCount} y sobran ${diagnostics.unexpectedDeviceNotificationsCount}. Usa "Reagendar" si acabas de editar bloques o eventos.';
+        }
         return 'La agenda del dispositivo no coincide todavia con lo que Ritual espera. Faltan ${diagnostics.missingDeviceNotificationsCount} y sobran ${diagnostics.unexpectedDeviceNotificationsCount}. Usa "Reagendar" si acabas de editar bloques o eventos.';
       }
 
       return 'La agenda del dispositivo no coincide todavia con lo que Ritual espera. Usa "Reagendar" si acabas de editar bloques o eventos.';
+    }
+
+    if (diagnostics.autoRepairResolvedIssue) {
+      return 'Ritual detecto una desalineacion y la corrigio automaticamente. La agenda ya vuelve a coincidir con el dispositivo.';
     }
 
     if (diagnostics.scheduledNotificationsCount == 0) {

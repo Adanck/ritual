@@ -272,66 +272,15 @@ class _SettingsPageState extends State<SettingsPage> {
     String initialJson = '',
     String? errorMessage,
   }) {
-    final controller = TextEditingController(text: initialJson);
-
     return showDialog<String>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Importar backup completo'),
-          content: SizedBox(
-            width: 640,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Pega aqui el JSON exportado por Ritual para restaurar biblioteca, historial, eventos puntuales y ajustes.',
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Este proceso reemplaza el estado local actual de la app.',
-                ),
-                const SizedBox(height: 12),
-                if (errorMessage != null) ...[
-                  Text(
-                    errorMessage,
-                    style: Theme.of(dialogContext).textTheme.bodySmall
-                        ?.copyWith(
-                          color: Theme.of(dialogContext).colorScheme.error,
-                          fontWeight: FontWeight.w700,
-                        ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                TextField(
-                  controller: controller,
-                  minLines: 8,
-                  maxLines: 14,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    alignLabelWithHint: true,
-                    labelText: 'JSON a importar',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop(controller.text.trim());
-              },
-              child: const Text('Restaurar'),
-            ),
-          ],
+        return _AppBackupImportDialog(
+          initialJson: initialJson,
+          errorMessage: errorMessage,
         );
       },
-    ).whenComplete(controller.dispose);
+    );
   }
 
   Future<_RoutineCsvImportRequest?> showRoutineCsvImportDialog({
@@ -339,111 +288,16 @@ class _SettingsPageState extends State<SettingsPage> {
     RoutineCsvImportMode initialMode = RoutineCsvImportMode.merge,
     String? errorMessage,
   }) {
-    final controller = TextEditingController(text: initialCsv);
-    var selectedMode = initialMode;
-
     return showDialog<_RoutineCsvImportRequest>(
       context: context,
       builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-            return AlertDialog(
-              title: const Text('Importar rutinas desde CSV'),
-              content: SizedBox(
-                width: 640,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Pega aqui el CSV exportado por Ritual o una version editada en Excel con las mismas columnas.',
-                    ),
-                    const SizedBox(height: 12),
-                    if (errorMessage != null) ...[
-                      Text(
-                        errorMessage,
-                        style: Theme.of(dialogContext).textTheme.bodySmall
-                            ?.copyWith(
-                              color: Theme.of(dialogContext).colorScheme.error,
-                              fontWeight: FontWeight.w700,
-                            ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    TextField(
-                      controller: controller,
-                      minLines: 8,
-                      maxLines: 14,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        alignLabelWithHint: true,
-                        labelText: 'CSV a importar',
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Modo de importacion',
-                      style: Theme.of(dialogContext).textTheme.titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 8),
-                    SegmentedButton<RoutineCsvImportMode>(
-                      showSelectedIcon: false,
-                      segments: const [
-                        ButtonSegment(
-                          value: RoutineCsvImportMode.merge,
-                          icon: Icon(Icons.library_add_rounded),
-                          label: Text('Agregar'),
-                        ),
-                        ButtonSegment(
-                          value: RoutineCsvImportMode.replace,
-                          icon: Icon(Icons.sync_alt_rounded),
-                          label: Text('Reemplazar'),
-                        ),
-                      ],
-                      selected: {selectedMode},
-                      onSelectionChanged: (selection) {
-                        if (selection.isEmpty) return;
-                        final nextMode = selection.first;
-
-                        setDialogState(() {
-                          selectedMode = nextMode;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      selectedMode == RoutineCsvImportMode.merge
-                          ? 'Conserva las rutinas actuales y suma las importadas como nuevas plantillas.'
-                          : 'Sustituye la biblioteca actual por la importada. No borra historial pasado.',
-                      style: Theme.of(dialogContext).textTheme.bodySmall
-                          ?.copyWith(color: Colors.white70),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancelar'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    Navigator.of(dialogContext).pop(
-                      _RoutineCsvImportRequest(
-                        csv: controller.text.trim(),
-                        mode: selectedMode,
-                      ),
-                    );
-                  },
-                  child: const Text('Importar'),
-                ),
-              ],
-            );
-          },
+        return _RoutineCsvImportDialog(
+          initialCsv: initialCsv,
+          initialMode: initialMode,
+          errorMessage: errorMessage,
         );
       },
-    ).whenComplete(controller.dispose);
+    );
   }
 
   String formatRoutineLibrarySummary(int routineCount, int blockCount) {
@@ -680,6 +534,250 @@ class _RoutineCsvImportRequest {
     required this.csv,
     required this.mode,
   });
+}
+
+class _AppBackupImportDialog extends StatefulWidget {
+  final String initialJson;
+  final String? errorMessage;
+
+  const _AppBackupImportDialog({
+    required this.initialJson,
+    this.errorMessage,
+  });
+
+  @override
+  State<_AppBackupImportDialog> createState() => _AppBackupImportDialogState();
+}
+
+class _AppBackupImportDialogState extends State<_AppBackupImportDialog> {
+  late final TextEditingController controller;
+
+  String get currentJson => controller.text.trim();
+
+  @override
+  void initState() {
+    super.initState();
+    controller = TextEditingController(text: widget.initialJson)
+      ..addListener(_handleChanged);
+  }
+
+  @override
+  void dispose() {
+    controller
+      ..removeListener(_handleChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _handleChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return AlertDialog(
+      scrollable: true,
+      title: const Text('Importar backup completo'),
+      content: SizedBox(
+        width: 640,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Pega aqui el JSON exportado por Ritual para restaurar biblioteca, historial, eventos puntuales y ajustes.',
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Este proceso reemplaza el estado local actual de la app.',
+            ),
+            const SizedBox(height: 12),
+            if (widget.errorMessage != null) ...[
+              Text(
+                widget.errorMessage!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            SizedBox(
+              height: 220,
+              child: TextField(
+                controller: controller,
+                minLines: null,
+                maxLines: null,
+                expands: true,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                  labelText: 'JSON a importar',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          onPressed: currentJson.isNotEmpty
+              ? () => Navigator.of(context).pop(currentJson)
+              : null,
+          child: const Text('Restaurar'),
+        ),
+      ],
+    );
+  }
+}
+
+class _RoutineCsvImportDialog extends StatefulWidget {
+  final String initialCsv;
+  final RoutineCsvImportMode initialMode;
+  final String? errorMessage;
+
+  const _RoutineCsvImportDialog({
+    required this.initialCsv,
+    required this.initialMode,
+    this.errorMessage,
+  });
+
+  @override
+  State<_RoutineCsvImportDialog> createState() => _RoutineCsvImportDialogState();
+}
+
+class _RoutineCsvImportDialogState extends State<_RoutineCsvImportDialog> {
+  late final TextEditingController controller;
+  late RoutineCsvImportMode selectedMode;
+
+  String get currentCsv => controller.text.trim();
+
+  @override
+  void initState() {
+    super.initState();
+    selectedMode = widget.initialMode;
+    controller = TextEditingController(text: widget.initialCsv)
+      ..addListener(_handleChanged);
+  }
+
+  @override
+  void dispose() {
+    controller
+      ..removeListener(_handleChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _handleChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return AlertDialog(
+      scrollable: true,
+      title: const Text('Importar rutinas desde CSV'),
+      content: SizedBox(
+        width: 640,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Pega aqui el CSV exportado por Ritual o una version editada en Excel con las mismas columnas.',
+            ),
+            const SizedBox(height: 12),
+            if (widget.errorMessage != null) ...[
+              Text(
+                widget.errorMessage!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            SizedBox(
+              height: 220,
+              child: TextField(
+                controller: controller,
+                minLines: null,
+                maxLines: null,
+                expands: true,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                  labelText: 'CSV a importar',
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Modo de importacion',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<RoutineCsvImportMode>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(
+                  value: RoutineCsvImportMode.merge,
+                  icon: Icon(Icons.library_add_rounded),
+                  label: Text('Agregar'),
+                ),
+                ButtonSegment(
+                  value: RoutineCsvImportMode.replace,
+                  icon: Icon(Icons.sync_alt_rounded),
+                  label: Text('Reemplazar'),
+                ),
+              ],
+              selected: {selectedMode},
+              onSelectionChanged: (selection) {
+                if (selection.isEmpty) return;
+                setState(() {
+                  selectedMode = selection.first;
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+            Text(
+              selectedMode == RoutineCsvImportMode.merge
+                  ? 'Conserva las rutinas actuales y suma las importadas como nuevas plantillas.'
+                  : 'Sustituye la biblioteca actual por la importada. No borra historial pasado.',
+              style: theme.textTheme.bodySmall?.copyWith(color: Colors.white70),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          onPressed: currentCsv.isNotEmpty
+              ? () => Navigator.of(context).pop(
+                  _RoutineCsvImportRequest(
+                    csv: currentCsv,
+                    mode: selectedMode,
+                  ),
+                )
+              : null,
+          child: const Text('Importar'),
+        ),
+      ],
+    );
+  }
 }
 
 /// Agrupa visualmente opciones relacionadas dentro de Ajustes.

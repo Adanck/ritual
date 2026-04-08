@@ -8,17 +8,17 @@ Se recomienda mantener este documento actualizado cada vez que cierres una sesio
 
 Progreso estimado actual del producto:
 
-`93%`
+`97%`
 
 Barra de avance:
 
-`[-------------------] 93% completado`
+`[-------------------] 97% completado`
 
 Lectura practica:
 
 - base y MVP serio: ya estan bastante solidos
 - producto pulido y mas completo: todavia queda trabajo relevante
-- falta aproximada: `7%`
+- falta aproximada: `3%`
 
 Como actualizar este porcentaje:
 
@@ -38,6 +38,13 @@ La idea general combina tres dimensiones:
 - planificacion por bloques de tiempo
 - seguimiento de habitos y cumplimiento diario
 - una capa futura de gamificacion ligera y motivadora
+
+Alcance actual deliberado:
+
+- app local para uso personal en movil
+- sin sincronizacion en la nube por ahora
+- sin login ni autenticacion
+- continuidad basada en almacenamiento local y respaldos manuales
 
 El tono del producto debe sentirse sobrio, profesional, ordenado y agradable de usar. No se busca una experiencia infantil ni sobrecargada.
 
@@ -181,6 +188,7 @@ Al momento de escribir este archivo, esto ya existe y funciona:
   - historial diario
   - eventos puntuales
   - ajustes
+- la continuidad actual del producto se apoya en estos respaldos manuales, no en servidor
 
 ## 5. Decisiones de producto ya tomadas
 
@@ -240,9 +248,12 @@ Lo mas importante que sigue pendiente, en terminos practicos, es esto:
 
 - gamificacion
 - importacion/exportacion directa con archivos Excel reales
+- mejor soporte web y escritorio
+
+Fuera de alcance por ahora:
+
 - sincronizacion en la nube
 - autenticacion
-- mejor soporte web y escritorio
 
 ## 7. Proximos pasos recomendados
 
@@ -252,7 +263,7 @@ Si otra persona o un futuro hilo retoma el proyecto, el orden recomendado es:
 2. seguir enriqueciendo eventos puntuales por fecha
 3. reforzar tests de flujos completos en agenda, backup y notificaciones
 4. mejorar la estructura interna del proyecto para que `TodayPage` no concentre tanta logica
-5. decidir si el siguiente salto de continuidad sera archivo Excel real o sincronizacion
+5. decidir si el siguiente salto de continuidad sera archivo Excel real o una UX mas directa para CSV/backup
 
 ## 8. Estado del roadmap
 

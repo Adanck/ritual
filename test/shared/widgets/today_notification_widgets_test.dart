@@ -9,7 +9,9 @@ void main() {
   ) async {
     await tester.pumpWidget(
       MaterialApp(
-        theme: ThemeData.dark(useMaterial3: true),
+        theme: ThemeData.dark(
+          useMaterial3: true,
+        ).copyWith(splashFactory: NoSplash.splashFactory),
         home: Scaffold(
           body: TodayNotificationStatusCard(
             diagnostics: NotificationDiagnostics(
@@ -43,12 +45,52 @@ void main() {
     expect(find.text('Ver agenda'), findsOneWidget);
   });
 
+  testWidgets('TodayNotificationStatusCard muestra estado de auto-reparacion', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(
+          useMaterial3: true,
+        ).copyWith(splashFactory: NoSplash.splashFactory),
+        home: Scaffold(
+          body: TodayNotificationStatusCard(
+            diagnostics: NotificationDiagnostics(
+              supportsLocalNotifications: true,
+              notificationsEnabled: true,
+              scheduledNotificationsCount: 2,
+              pendingDeviceNotificationsCount: 2,
+              usedExactSourceComparison: true,
+              isScheduleAligned: true,
+              autoRepairAttempted: true,
+              autoRepairResolvedIssue: true,
+              nextScheduledAt: DateTime(2026, 4, 7, 10, 0),
+              lastRefreshedAt: DateTime(2026, 4, 7, 9, 0),
+            ),
+            pushEnabledBlocksCount: 2,
+            statusDescription: 'Ritual detecto una desalineacion y la corrigio automaticamente.',
+            formatWhen: (_) => 'Hoy 10:00',
+            isActionInProgress: false,
+            onOpenAgenda: () {},
+            onReviewPermissions: () {},
+            onResync: () {},
+            onSendTest: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Auto-reparada'), findsOneWidget);
+  });
+
   testWidgets('TodayNotificationAgendaSheet muestra estado de cada recordatorio', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
       MaterialApp(
-        theme: ThemeData.dark(useMaterial3: true),
+        theme: ThemeData.dark(
+          useMaterial3: true,
+        ).copyWith(splashFactory: NoSplash.splashFactory),
         home: Scaffold(
           body: TodayNotificationAgendaSheet(
             items: [
@@ -67,6 +109,7 @@ void main() {
                 isPresentOnDevice: true,
               ),
             ],
+            unexpectedSourceKeys: const ['dated:2026-04-08:ghost'],
             formatWhen: (_) => 'Hoy',
           ),
         ),
@@ -78,5 +121,6 @@ void main() {
     expect(find.text('Oracion'), findsOneWidget);
     expect(find.text('Pendiente de resincronizar'), findsOneWidget);
     expect(find.text('En dispositivo'), findsOneWidget);
+    expect(find.textContaining('recordatorios extra'), findsOneWidget);
   });
 }

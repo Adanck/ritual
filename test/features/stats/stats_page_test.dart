@@ -66,7 +66,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        theme: ThemeData.dark(useMaterial3: true),
+        theme: ThemeData.dark(
+          useMaterial3: true,
+        ).copyWith(splashFactory: NoSplash.splashFactory),
         home: StatsPage(
           routines: routines,
           dailyRecords: records,

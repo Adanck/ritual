@@ -122,14 +122,18 @@ class NotificationService {
     return null;
   }
 
-  /// Devuelve cuantas notificaciones futuras quedaron programadas.
+  /// Devuelve cuantas notificaciones futuras de Ritual quedaron programadas.
+  ///
+  /// Regla: preferimos contar solo payloads reconocidas de Ritual para que el
+  /// diagnostico no se contamine con entradas residuales o ajenas a la agenda
+  /// normal de bloques y eventos puntuales.
   static Future<int> getPendingNotificationsCount() async {
     if (kIsWeb) return 0;
     await initialize();
 
     try {
-      final pendingRequests = await _plugin.pendingNotificationRequests();
-      return pendingRequests.length;
+      final snapshot = await getPendingNotificationSnapshot();
+      return snapshot.count;
     } catch (_) {
       return 0;
     }
@@ -161,7 +165,7 @@ class NotificationService {
           .toSet();
 
       return PendingNotificationSnapshot(
-        count: pendingRequests.length,
+        count: ritualSourceKeys.length,
         ritualSourceKeys: ritualSourceKeys,
       );
     } catch (_) {

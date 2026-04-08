@@ -129,5 +129,27 @@ routine-1,Rutina rota,false,always,,,,06:00,,Bloque sin cierre,,habit,true,false
         'Anotar ideas, dudas y cierre\nsin perder contexto',
       );
     });
+
+    test('soporta encabezado con BOM y valores localizados desde Excel', () {
+      const csv = '''
+\uFEFFroutine_id,routine_name,routine_is_active,schedule_type,schedule_start_date,schedule_end_date,block_id,block_start,block_end,block_title,block_description,block_type,counts_toward_progress,receives_push_notification
+rutina-1,Rutina localizada,si,rango_personalizado,2026-04-07,2026-04-14,bloque-1,06:00,06:30,Oracion,"Con calma, libreta",habito,si,no
+''';
+
+      final imported = RoutineCsvService.importRoutines(csv);
+
+      expect(imported.routineCount, 1);
+      expect(imported.blockCount, 1);
+      expect(imported.routines.single.isActive, isTrue);
+      expect(
+        imported.routines.single.schedule.type,
+        RoutineScheduleType.customRange,
+      );
+      expect(imported.routines.single.blocks.single.type, BlockType.habit);
+      expect(
+        imported.routines.single.blocks.single.receivesPushNotification,
+        isFalse,
+      );
+    });
   });
 }

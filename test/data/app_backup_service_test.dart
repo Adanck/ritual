@@ -101,5 +101,39 @@ void main() {
         ),
       );
     });
+
+    test('soporta backups minimos sin historial ni eventos puntuales', () {
+      const minimalJson = '''
+{
+  "version": 1,
+  "appSettings": {
+    "warnOnOverlaps": true,
+    "autoRequestNotificationPermissions": true,
+    "notificationHorizonDays": 21,
+    "showCompletedDatedEventsInUpcoming": true
+  },
+  "routines": [
+    {
+      "id": "routine-1",
+      "name": "Base",
+      "isActive": true,
+      "schedule": {
+        "type": "always",
+        "startDateKey": null,
+        "endDateKey": null
+      },
+      "blocks": []
+    }
+  ]
+}
+''';
+
+      final imported = AppBackupService.import(minimalJson);
+
+      expect(imported.routineCount, 1);
+      expect(imported.dailyRecordCount, 0);
+      expect(imported.datedBlockCount, 0);
+      expect(imported.routines.single.name, 'Base');
+    });
   });
 }

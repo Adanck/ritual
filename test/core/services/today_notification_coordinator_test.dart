@@ -103,6 +103,46 @@ void main() {
     );
   });
 
+  test('buildStatusDescription explica cuando la auto-reparacion no basto', () {
+    final diagnostics = NotificationDiagnostics(
+      supportsLocalNotifications: true,
+      notificationsEnabled: true,
+      scheduledNotificationsCount: 3,
+      pendingDeviceNotificationsCount: 1,
+      missingDeviceNotificationsCount: 2,
+      unexpectedDeviceNotificationsCount: 1,
+      usedExactSourceComparison: true,
+      isScheduleAligned: false,
+      autoRepairAttempted: true,
+      nextScheduledAt: DateTime(2026, 4, 7, 10, 0),
+      lastRefreshedAt: DateTime(2026, 4, 7, 9, 0),
+    );
+
+    expect(
+      TodayNotificationCoordinator.buildStatusDescription(diagnostics),
+      allOf(contains('intento corregir'), contains('todavia no coincide')),
+    );
+  });
+
+  test('buildStatusDescription resume cuando la auto-reparacion resolvio', () {
+    final diagnostics = NotificationDiagnostics(
+      supportsLocalNotifications: true,
+      notificationsEnabled: true,
+      scheduledNotificationsCount: 2,
+      pendingDeviceNotificationsCount: 2,
+      isScheduleAligned: true,
+      autoRepairAttempted: true,
+      autoRepairResolvedIssue: true,
+      nextScheduledAt: DateTime(2026, 4, 7, 10, 0),
+      lastRefreshedAt: DateTime(2026, 4, 7, 9, 0),
+    );
+
+    expect(
+      TodayNotificationCoordinator.buildStatusDescription(diagnostics),
+      contains('corrigio automaticamente'),
+    );
+  });
+
   test('buildStatusDescription resume siguiente recordatorio cuando esta alineada', () {
     final diagnostics = NotificationDiagnostics(
       supportsLocalNotifications: true,
