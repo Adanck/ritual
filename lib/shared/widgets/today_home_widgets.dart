@@ -6,7 +6,7 @@ import 'package:ritual/data/models/dated_block_entry.dart';
 ///
 /// Recibe widgets ya construidos para no duplicar reglas de negocio dentro de
 /// la capa visual y mantener la presentacion aislada de `TodayPage`.
-class TodayOverviewCard extends StatelessWidget {
+class TodayOverviewCard extends StatefulWidget {
   final Color progressColor;
   final String progressDescription;
   final List<Widget> headerChips;
@@ -35,80 +35,102 @@ class TodayOverviewCard extends StatelessWidget {
   });
 
   @override
+  State<TodayOverviewCard> createState() => _TodayOverviewCardState();
+}
+
+class _TodayOverviewCardState extends State<TodayOverviewCard> {
+  bool showDetails = false;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isCompact = MediaQuery.of(context).size.width < 430;
+    final collapsedHeaderChips = isCompact
+        ? widget.headerChips.take(2).toList()
+        : widget.headerChips;
+    final collapsedInsightChips = isCompact
+        ? widget.insightChips.take(2).toList()
+        : widget.insightChips;
+    final shouldShowExpandableDetails =
+        widget.headerChips.length > collapsedHeaderChips.length ||
+        widget.noticeCards.isNotEmpty ||
+        widget.notificationCard != null ||
+        widget.suggestedRoutineCard != null ||
+        widget.upcomingEventsCard != null ||
+        widget.insightChips.length > collapsedInsightChips.length ||
+        isCompact;
+    final cardPadding = isCompact ? 14.0 : 18.0;
+    final progressBarHeight = isCompact ? 8.0 : 12.0;
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: EdgeInsets.all(cardPadding),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         gradient: LinearGradient(
           colors: [
-            progressColor.withValues(alpha: 0.28),
+            widget.progressColor.withValues(alpha: 0.28),
             theme.colorScheme.surface,
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         border: Border.all(
-          color: progressColor.withValues(alpha: 0.24),
+          color: widget.progressColor.withValues(alpha: 0.24),
         ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Progreso del dia',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            progressDescription,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: Colors.white70,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Progreso del dia',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      widget.progressDescription,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (shouldShowExpandableDetails)
+                IconButton(
+                  tooltip: showDetails ? 'Ocultar resumen' : 'Expandir resumen',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () {
+                    setState(() {
+                      showDetails = !showDetails;
+                    });
+                  },
+                  icon: Icon(
+                    showDetails
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: headerChips,
+            children: collapsedHeaderChips,
           ),
-          const SizedBox(height: 8),
-          Text(
-            scheduleLabel,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: Colors.white70,
-            ),
-          ),
-          if (noticeCards.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            ...noticeCards
-                .map(
-                  (card) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: card,
-                  ),
-                ),
-          ],
-          if (notificationCard != null) ...[
-            const SizedBox(height: 6),
-            notificationCard!,
-          ],
-          if (suggestedRoutineCard != null) ...[
-            const SizedBox(height: 6),
-            suggestedRoutineCard!,
-          ],
-          if (upcomingEventsCard != null) ...[
-            const SizedBox(height: 6),
-            upcomingEventsCard!,
-          ],
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           TweenAnimationBuilder<double>(
-            tween: Tween<double>(begin: 0, end: progress),
+            tween: Tween<double>(begin: 0, end: widget.progress),
             duration: const Duration(milliseconds: 500),
             curve: Curves.easeOut,
             builder: (context, value, _) {
@@ -116,24 +138,88 @@ class TodayOverviewCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(999),
                 child: LinearProgressIndicator(
                   value: value,
-                  minHeight: 12,
-                  valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+                  minHeight: progressBarHeight,
+                  valueColor: AlwaysStoppedAnimation<Color>(widget.progressColor),
                   backgroundColor: Colors.white12,
                 ),
               );
             },
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: insightChips,
+            children: collapsedInsightChips,
           ),
-          const SizedBox(height: 10),
-          Text(
-            lastActiveLabel,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: Colors.white54,
+          ClipRect(
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              child: (showDetails || !isCompact)
+                  ? Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (widget.headerChips.length >
+                              collapsedHeaderChips.length)
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: widget.headerChips
+                                  .skip(collapsedHeaderChips.length)
+                                  .toList(),
+                            ),
+                          const SizedBox(height: 8),
+                          Text(
+                            widget.scheduleLabel,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: Colors.white70,
+                            ),
+                          ),
+                          if (widget.noticeCards.isNotEmpty) ...[
+                            const SizedBox(height: 14),
+                            ...widget.noticeCards.map(
+                              (card) => Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: card,
+                              ),
+                            ),
+                          ],
+                          if (widget.notificationCard != null) ...[
+                            const SizedBox(height: 6),
+                            widget.notificationCard!,
+                          ],
+                          if (widget.suggestedRoutineCard != null) ...[
+                            const SizedBox(height: 6),
+                            widget.suggestedRoutineCard!,
+                          ],
+                          if (widget.upcomingEventsCard != null) ...[
+                            const SizedBox(height: 6),
+                            widget.upcomingEventsCard!,
+                          ],
+                          if (widget.insightChips.length >
+                              collapsedInsightChips.length) ...[
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: widget.insightChips
+                                  .skip(collapsedInsightChips.length)
+                                  .toList(),
+                            ),
+                          ],
+                          const SizedBox(height: 10),
+                          Text(
+                            widget.lastActiveLabel,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: Colors.white54,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : const SizedBox.shrink(),
             ),
           ),
         ],

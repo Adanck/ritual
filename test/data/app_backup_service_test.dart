@@ -71,6 +71,7 @@ void main() {
           autoRequestNotificationPermissions: false,
           notificationHorizonDays: 14,
           showCompletedDatedEventsInUpcoming: false,
+          visualStyle: AppVisualStyle.ios,
         ),
       );
 
@@ -85,6 +86,7 @@ void main() {
       expect(imported.datedBlocks.single.block.title, 'Reunion');
       expect(imported.appSettings.warnOnOverlaps, isFalse);
       expect(imported.appSettings.notificationHorizonDays, 14);
+      expect(imported.appSettings.visualStyle, AppVisualStyle.ios);
     });
 
     test('falla si el backup no trae version valida', () {
@@ -110,7 +112,8 @@ void main() {
     "warnOnOverlaps": true,
     "autoRequestNotificationPermissions": true,
     "notificationHorizonDays": 21,
-    "showCompletedDatedEventsInUpcoming": true
+    "showCompletedDatedEventsInUpcoming": true,
+    "visualStyle": "ritual"
   },
   "routines": [
     {
@@ -134,6 +137,7 @@ void main() {
       expect(imported.dailyRecordCount, 0);
       expect(imported.datedBlockCount, 0);
       expect(imported.routines.single.name, 'Base');
+      expect(imported.appSettings.visualStyle, AppVisualStyle.ritual);
     });
   });
 }

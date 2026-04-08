@@ -22,7 +22,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Ajustes'), findsOneWidget);
+    expect(find.text('Apariencia'), findsOneWidget);
+    expect(find.text('iOS'), findsOneWidget);
     expect(find.textContaining('Planificaci'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Notificaciones'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     expect(find.text('Notificaciones'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Respaldo de rutinas'),

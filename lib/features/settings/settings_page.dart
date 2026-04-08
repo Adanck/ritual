@@ -38,6 +38,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late bool autoRequestNotificationPermissions;
   late int notificationHorizonDays;
   late bool showCompletedDatedEventsInUpcoming;
+  late AppVisualStyle visualStyle;
 
   static const List<int> _horizonOptions = [7, 14, 21, 30];
 
@@ -50,6 +51,7 @@ class _SettingsPageState extends State<SettingsPage> {
     notificationHorizonDays = widget.initialSettings.notificationHorizonDays;
     showCompletedDatedEventsInUpcoming =
         widget.initialSettings.showCompletedDatedEventsInUpcoming;
+    visualStyle = widget.initialSettings.visualStyle;
   }
 
   AppSettings get currentSettings => AppSettings(
@@ -59,6 +61,7 @@ class _SettingsPageState extends State<SettingsPage> {
         notificationHorizonDays: notificationHorizonDays,
         showCompletedDatedEventsInUpcoming:
             showCompletedDatedEventsInUpcoming,
+        visualStyle: visualStyle,
       );
 
   Future<void> openRoutineCsvExportDialog() async {
@@ -342,6 +345,54 @@ class _SettingsPageState extends State<SettingsPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
+          _SettingsSection(
+            title: 'Apariencia',
+            description:
+                'Elige si quieres mantener la identidad original de Ritual o una variante visual mas cercana a iOS.',
+            children: [
+              SegmentedButton<AppVisualStyle>(
+                showSelectedIcon: false,
+                segments: AppVisualStyle.values.map((style) {
+                  return ButtonSegment<AppVisualStyle>(
+                    value: style,
+                    icon: Icon(
+                      style == AppVisualStyle.ios
+                          ? Icons.phone_iphone_rounded
+                          : Icons.auto_awesome_rounded,
+                    ),
+                    label: Text(style.label),
+                  );
+                }).toList(),
+                selected: {visualStyle},
+                onSelectionChanged: (selection) {
+                  if (selection.isEmpty) return;
+                  setState(() {
+                    visualStyle = selection.first;
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              Text(
+                visualStyle.description,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.white70,
+                ),
+              ),
+              const SizedBox(height: 10),
+              _SettingsNote(
+                icon: visualStyle == AppVisualStyle.ios
+                    ? Icons.gesture_rounded
+                    : Icons.grid_view_rounded,
+                title: visualStyle == AppVisualStyle.ios
+                    ? 'Look mas limpio y suave'
+                    : 'Look original de Ritual',
+                description: visualStyle == AppVisualStyle.ios
+                    ? 'Usa una paleta mas cercana al sistema de Apple, superficies redondeadas y transiciones tipo iPhone.'
+                    : 'Mantiene la personalidad actual, con paneles densos y una lectura mas de dashboard.',
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
           _SettingsSection(
             title: 'Planificacion',
             description:

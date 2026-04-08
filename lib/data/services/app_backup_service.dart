@@ -258,6 +258,7 @@ class AppBackupService {
       'notificationHorizonDays': settings.notificationHorizonDays,
       'showCompletedDatedEventsInUpcoming':
           settings.showCompletedDatedEventsInUpcoming,
+      'visualStyle': settings.visualStyle.storageValue,
     };
   }
 
@@ -269,6 +270,7 @@ class AppBackupService {
       notificationHorizonDays: data['notificationHorizonDays'] ?? 21,
       showCompletedDatedEventsInUpcoming:
           data['showCompletedDatedEventsInUpcoming'] ?? true,
+      visualStyle: AppVisualStyle.fromStorage(data['visualStyle']),
     );
   }
 }

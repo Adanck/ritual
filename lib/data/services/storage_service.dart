@@ -233,6 +233,7 @@ class StorageService {
       'notificationHorizonDays': settings.notificationHorizonDays,
       'showCompletedDatedEventsInUpcoming':
           settings.showCompletedDatedEventsInUpcoming,
+      'visualStyle': settings.visualStyle.storageValue,
     });
   }
 
@@ -255,6 +256,7 @@ class StorageService {
       notificationHorizonDays: data['notificationHorizonDays'] ?? 21,
       showCompletedDatedEventsInUpcoming:
           data['showCompletedDatedEventsInUpcoming'] ?? true,
+      visualStyle: AppVisualStyle.fromStorage(data['visualStyle']),
     );
   }
 }

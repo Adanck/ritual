@@ -1,5 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:ritual/core/models/notification_diagnostics.dart';
+import 'dart:async';
+import 'package:ritual/app/app_settings_controller.dart';
 import 'package:ritual/core/services/notification_service.dart';
 import 'package:ritual/core/services/today_notification_coordinator.dart';
 import 'package:ritual/core/utils/dated_block_entry_collection_utils.dart';
@@ -38,6 +40,20 @@ class _RoutineFormResult {
   const _RoutineFormResult({
     required this.name,
     required this.schedule,
+  });
+}
+
+class _FloatingStatFeedback {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final bool emphasized;
+
+  const _FloatingStatFeedback({
+    required this.label,
+    required this.icon,
+    required this.color,
+    this.emphasized = false,
   });
 }
 
@@ -87,6 +103,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       const NotificationDiagnostics.unsupported();
   bool isNotificationActionInProgress = false;
   int importEntityIdSeed = 0;
+  _FloatingStatFeedback? floatingStatFeedback;
+  Timer? floatingStatFeedbackTimer;
 
   static const List<DropdownMenuItem<BlockType>> _blockTypeOptions = [
     DropdownMenuItem(
@@ -551,6 +569,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    floatingStatFeedbackTimer?.cancel();
     super.dispose();
   }
 
@@ -650,11 +669,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     }
 
     await autoSelectSuggestedRoutineIfHelpful();
-    await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
-    await syncNotificationsWithStoredState();
+    await ensureTodayRecordForActiveRoutine(
+      syncWithTemplate: true,
+      syncNotifications: false,
+    );
 
     if (!mounted) return;
     setState(() {});
+    triggerNotificationSyncInBackground();
   }
 
   /// Garantiza que exista un registro para la rutina activa en la fecha actual.
@@ -664,6 +686,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// los checks apagados.
   Future<void> ensureTodayRecordForActiveRoutine({
     bool syncWithTemplate = false,
+    bool syncNotifications = true,
   }) async {
     if (activeRoutine == null) return;
 
@@ -691,7 +714,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       ];
 
       await StorageService.saveDailyRecords(dailyRecords);
-      await syncNotificationsWithStoredState();
+      if (syncNotifications) {
+        await syncNotificationsWithStoredState();
+      }
       return;
     }
 
@@ -709,8 +734,77 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         );
 
       await StorageService.saveDailyRecords(dailyRecords);
-      await syncNotificationsWithStoredState();
+      if (syncNotifications) {
+        await syncNotificationsWithStoredState();
+      }
     }
+  }
+
+  void triggerNotificationSyncInBackground() {
+    unawaited(_syncNotificationsSafelyInBackground());
+  }
+
+  Future<void> _syncNotificationsSafelyInBackground() async {
+    try {
+      await syncNotificationsWithStoredState();
+    } catch (_) {
+      // La pantalla principal no debe quedar bloqueada si la agenda de
+      // notificaciones falla o tarda demasiado en un dispositivo concreto.
+    }
+  }
+
+  int get completedProgressBlockCount =>
+      visibleBlocks.where((block) => block.countsTowardProgress && block.isDone).length;
+
+  int get totalProgressBlockCount =>
+      visibleBlocks.where((block) => block.countsTowardProgress).length;
+
+  void showFloatingStatFeedback({
+    required bool isDoneNow,
+    required int previousCompleted,
+    required int nextCompleted,
+    required int totalProgress,
+    required int previousStreak,
+    required int nextStreak,
+  }) {
+    String label;
+    IconData icon;
+    Color color;
+
+    if (nextStreak != previousStreak) {
+      label = nextStreak > previousStreak
+          ? 'Racha: $nextStreak'
+          : 'Racha: $nextStreak';
+      icon = Icons.local_fire_department_rounded;
+      color = const Color(0xFFFFA24D);
+    } else if (totalProgress > 0) {
+      label = '$nextCompleted/$totalProgress progreso';
+      icon = isDoneNow ? Icons.task_alt_rounded : Icons.undo_rounded;
+      color = isDoneNow ? const Color(0xFF41C47B) : const Color(0xFF4DA3FF);
+    } else {
+      label = isDoneNow ? 'Completado' : 'Pendiente';
+      icon = isDoneNow ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded;
+      color = isDoneNow ? const Color(0xFF41C47B) : const Color(0xFF4DA3FF);
+    }
+
+    floatingStatFeedbackTimer?.cancel();
+    if (!mounted) return;
+
+    setState(() {
+      floatingStatFeedback = _FloatingStatFeedback(
+        label: label,
+        icon: icon,
+        color: color,
+        emphasized: nextCompleted != previousCompleted || nextStreak != previousStreak,
+      );
+    });
+
+    floatingStatFeedbackTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (!mounted) return;
+      setState(() {
+        floatingStatFeedback = null;
+      });
+    });
   }
 
   /// Persiste cambios sobre la plantilla y sincroniza el dia actual.
@@ -770,10 +864,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       activeRoutineId: activeRoutine?.id,
       anchorDate: todayDate,
       horizonDays: appSettings.notificationHorizonDays,
-    );
+    ).timeout(const Duration(seconds: 8));
 
     var diagnostics = await loadNotificationDiagnostics(
       previewEntries: previewEntries,
+    ).timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => notificationDiagnostics,
     );
 
     if (TodayNotificationCoordinator.shouldAttemptAutoRepair(diagnostics)) {
@@ -794,10 +891,13 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           activeRoutineId: activeRoutine?.id,
           anchorDate: todayDate,
           horizonDays: appSettings.notificationHorizonDays,
-        );
+        ).timeout(const Duration(seconds: 8));
         diagnostics = await loadNotificationDiagnostics(
           previewEntries: previewEntries,
           autoRepairAttempted: autoRepairAttempted,
+        ).timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => diagnostics,
         );
         autoRepairResolvedIssue = diagnostics.isScheduleAligned;
       }
@@ -807,12 +907,18 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       diagnostics = await loadNotificationDiagnostics(
         previewEntries: previewEntries,
         autoRepairAttempted: true,
+      ).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => diagnostics,
       );
     } else if (autoRepairResolvedIssue) {
       diagnostics = await loadNotificationDiagnostics(
         previewEntries: previewEntries,
         autoRepairAttempted: true,
         autoRepairResolvedIssue: true,
+      ).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => diagnostics,
       );
     }
 
@@ -1041,6 +1147,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       await ensureTodayRecordForActiveRoutine(syncWithTemplate: true);
     }
 
+    final previousInsights = activeRoutineInsights;
+    final previousCompleted = completedProgressBlockCount;
     final block = visibleBlocks[index];
 
     if (isDatedBlock(block)) {
@@ -1051,6 +1159,16 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         reminderEntry.block.isDone = !reminderEntry.block.isDone;
       });
 
+      final nextInsights = activeRoutineInsights;
+      final nextCompleted = completedProgressBlockCount;
+      showFloatingStatFeedback(
+        isDoneNow: reminderEntry.block.isDone,
+        previousCompleted: previousCompleted,
+        nextCompleted: nextCompleted,
+        totalProgress: totalProgressBlockCount,
+        previousStreak: previousInsights.currentStreak,
+        nextStreak: nextInsights.currentStreak,
+      );
       await saveDatedBlocksAndRefresh();
       return;
     }
@@ -1065,6 +1183,16 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           !currentRecord.blocks[recordIndex].isDone;
     });
 
+    final nextInsights = activeRoutineInsights;
+    final nextCompleted = completedProgressBlockCount;
+    showFloatingStatFeedback(
+      isDoneNow: currentRecord.blocks[recordIndex].isDone,
+      previousCompleted: previousCompleted,
+      nextCompleted: nextCompleted,
+      totalProgress: totalProgressBlockCount,
+      previousStreak: previousInsights.currentStreak,
+      nextStreak: nextInsights.currentStreak,
+    );
     await StorageService.saveDailyRecords(dailyRecords);
     await syncNotificationsWithStoredState();
   }
@@ -4163,6 +4291,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     if (updatedSettings == null) return;
 
     appSettings = updatedSettings;
+    AppSettingsController.instance.apply(updatedSettings);
     await StorageService.saveAppSettings(updatedSettings);
     await syncNotificationsWithStoredState();
 
@@ -4259,6 +4388,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     await StorageService.saveDailyRecords(dailyRecords);
     await StorageService.saveDatedBlocks(datedBlocks);
     await StorageService.saveAppSettings(appSettings);
+    AppSettingsController.instance.apply(appSettings);
     await syncNotificationsWithStoredState();
 
     return AppBackupImportData(
@@ -4343,6 +4473,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   /// Regla: al marcarlo como hecho tambien resincronizamos notificaciones para
   /// evitar recordatorios de algo que ya se resolvio.
   Future<void> toggleDatedBlockEntryCompletion(DatedBlockEntry entry) async {
+    final previousInsights = activeRoutineInsights;
+    final previousCompleted = completedProgressBlockCount;
     final updatedBlock = entry.block.copyWith(isDone: !entry.block.isDone);
 
     setState(() {
@@ -4352,6 +4484,16 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       );
     });
 
+    final nextInsights = activeRoutineInsights;
+    final nextCompleted = completedProgressBlockCount;
+    showFloatingStatFeedback(
+      isDoneNow: updatedBlock.isDone,
+      previousCompleted: previousCompleted,
+      nextCompleted: nextCompleted,
+      totalProgress: totalProgressBlockCount,
+      previousStreak: previousInsights.currentStreak,
+      nextStreak: nextInsights.currentStreak,
+    );
     await saveDatedBlocksAndRefresh();
     showFeedbackMessage(
       updatedBlock.isDone
@@ -4586,136 +4728,138 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
+          Column(
+            children: [
           // Tarjeta superior con el contexto del dia y el progreso agregado.
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: TodayOverviewCard(
-              progressColor: progressColor,
-              progressDescription: progressDescription,
-              headerChips: [
-                Chip(
-                  avatar: const Icon(Icons.auto_awesome_motion, size: 18),
-                  label: Text(activeRoutine!.name),
-                ),
-                Chip(
-                  avatar: const Icon(Icons.view_list_rounded, size: 18),
-                  label: Text('${blocks.length} bloques'),
-                ),
-                Chip(
-                  avatar: const Icon(Icons.date_range_rounded, size: 18),
-                  label: Text(activeRoutine!.schedule.shortLabel),
-                ),
-                if (!isScheduledToday)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: TodayOverviewCard(
+                progressColor: progressColor,
+                progressDescription: progressDescription,
+                headerChips: [
                   Chip(
-                    avatar: const Icon(Icons.watch_later_outlined, size: 18),
-                    label: const Text('Fuera del rango sugerido'),
+                    avatar: const Icon(Icons.auto_awesome_motion, size: 18),
+                    label: Text(activeRoutine!.name),
                   ),
-                if (nonProgressBlocksCount > 0)
                   Chip(
-                    avatar: const Icon(Icons.visibility_outlined, size: 18),
-                    label: Text('$nonProgressBlocksCount informativos'),
+                    avatar: const Icon(Icons.view_list_rounded, size: 18),
+                    label: Text('${blocks.length} bloques'),
                   ),
-                if (pushEnabledBlocksCount > 0)
                   Chip(
-                    avatar: const Icon(
-                      Icons.notifications_active_outlined,
-                      size: 18,
+                    avatar: const Icon(Icons.date_range_rounded, size: 18),
+                    label: Text(activeRoutine!.schedule.shortLabel),
+                  ),
+                  if (!isScheduledToday)
+                    Chip(
+                      avatar: const Icon(Icons.watch_later_outlined, size: 18),
+                      label: const Text('Fuera del rango sugerido'),
                     ),
-                    label: Text('$pushEnabledBlocksCount con push'),
-                  ),
-              ],
-              scheduleLabel: activeRoutine!.schedule.displayLabel,
-              noticeCards: routineNotices
-                  .map(
-                    (notice) => buildRoutineNoticeCard(
-                      context: context,
-                      notice: notice,
+                  if (nonProgressBlocksCount > 0)
+                    Chip(
+                      avatar: const Icon(Icons.visibility_outlined, size: 18),
+                      label: Text('$nonProgressBlocksCount informativos'),
                     ),
-                  )
-                  .toList(),
-              notificationCard: pushEnabledBlocksCount > 0
-                  ? buildNotificationStatusCard(
-                      context: context,
-                      pushEnabledBlocksCount: pushEnabledBlocksCount,
+                  if (pushEnabledBlocksCount > 0)
+                    Chip(
+                      avatar: const Icon(
+                        Icons.notifications_active_outlined,
+                        size: 18,
+                      ),
+                      label: Text('$pushEnabledBlocksCount con push'),
+                    ),
+                ],
+                scheduleLabel: activeRoutine!.schedule.displayLabel,
+                noticeCards: routineNotices
+                    .map(
+                      (notice) => buildRoutineNoticeCard(
+                        context: context,
+                        notice: notice,
+                      ),
                     )
-                  : null,
-              suggestedRoutineCard: suggestedRoutineCard,
-              upcomingEventsCard: upcomingDatedEntries.isNotEmpty
-                  ? buildUpcomingDatedEventsCard(
-                      context: context,
-                      entries: upcomingDatedEntries,
-                      scheduledNotificationSourceKeys:
-                          scheduledNotificationSourceKeys,
-                    )
-                  : null,
-              progress: progress,
-              insightChips: [
-                buildInsightChip(
-                  context: context,
-                  icon: Icons.local_fire_department_outlined,
-                  label: 'racha',
-                  value: '${insights.currentStreak}',
-                ),
-                buildInsightChip(
-                  context: context,
-                  icon: Icons.workspace_premium_outlined,
-                  label: 'mejor racha',
-                  value: '${insights.bestStreak}',
-                ),
-                buildInsightChip(
-                  context: context,
-                  icon: Icons.calendar_today_outlined,
-                  label: 'd\u00EDas activos',
-                  value: '${insights.activeDays}',
-                ),
-                buildInsightChip(
-                  context: context,
-                  icon: Icons.percent_rounded,
-                  label: 'cumplimiento',
-                  value: formatPercentValue(insights.completionRate),
-                ),
-                buildInsightChip(
-                  context: context,
-                  icon: Icons.task_alt_outlined,
-                  label: 'bloques',
-                  value: '${insights.completedBlocks}',
-                ),
-                buildInsightChip(
-                  context: context,
-                  icon: Icons.calendar_view_week_outlined,
-                  label: '7d',
-                  value: formatPercentValue(insights.weeklyCompletionRate),
-                ),
-                buildInsightChip(
-                  context: context,
-                  icon: Icons.calendar_month_outlined,
-                  label: '30d',
-                  value: formatPercentValue(insights.monthlyCompletionRate),
-                ),
-                buildInsightChip(
-                  context: context,
-                  icon: Icons.verified_outlined,
-                  label: 'dias completos',
-                  value: '${insights.completedDays}/${insights.trackedDays}',
-                ),
-                buildInsightChip(
-                  context: context,
-                  icon: Icons.av_timer_rounded,
-                  label: 'progreso',
-                  value:
-                      '${insights.progressBlocksCompleted}/${insights.progressBlocksTracked}',
-                ),
-              ],
-              lastActiveLabel: buildLastActiveLabel(insights),
+                    .toList(),
+                notificationCard: pushEnabledBlocksCount > 0
+                    ? buildNotificationStatusCard(
+                        context: context,
+                        pushEnabledBlocksCount: pushEnabledBlocksCount,
+                      )
+                    : null,
+                suggestedRoutineCard: suggestedRoutineCard,
+                upcomingEventsCard: upcomingDatedEntries.isNotEmpty
+                    ? buildUpcomingDatedEventsCard(
+                        context: context,
+                        entries: upcomingDatedEntries,
+                        scheduledNotificationSourceKeys:
+                            scheduledNotificationSourceKeys,
+                      )
+                    : null,
+                progress: progress,
+                insightChips: [
+                  buildInsightChip(
+                    context: context,
+                    icon: Icons.local_fire_department_outlined,
+                    label: 'racha',
+                    value: '${insights.currentStreak}',
+                  ),
+                  buildInsightChip(
+                    context: context,
+                    icon: Icons.workspace_premium_outlined,
+                    label: 'mejor racha',
+                    value: '${insights.bestStreak}',
+                  ),
+                  buildInsightChip(
+                    context: context,
+                    icon: Icons.calendar_today_outlined,
+                    label: 'd\u00EDas activos',
+                    value: '${insights.activeDays}',
+                  ),
+                  buildInsightChip(
+                    context: context,
+                    icon: Icons.percent_rounded,
+                    label: 'cumplimiento',
+                    value: formatPercentValue(insights.completionRate),
+                  ),
+                  buildInsightChip(
+                    context: context,
+                    icon: Icons.task_alt_outlined,
+                    label: 'bloques',
+                    value: '${insights.completedBlocks}',
+                  ),
+                  buildInsightChip(
+                    context: context,
+                    icon: Icons.calendar_view_week_outlined,
+                    label: '7d',
+                    value: formatPercentValue(insights.weeklyCompletionRate),
+                  ),
+                  buildInsightChip(
+                    context: context,
+                    icon: Icons.calendar_month_outlined,
+                    label: '30d',
+                    value: formatPercentValue(insights.monthlyCompletionRate),
+                  ),
+                  buildInsightChip(
+                    context: context,
+                    icon: Icons.verified_outlined,
+                    label: 'dias completos',
+                    value: '${insights.completedDays}/${insights.trackedDays}',
+                  ),
+                  buildInsightChip(
+                    context: context,
+                    icon: Icons.av_timer_rounded,
+                    label: 'progreso',
+                    value:
+                        '${insights.progressBlocksCompleted}/${insights.progressBlocksTracked}',
+                  ),
+                ],
+                lastActiveLabel: buildLastActiveLabel(insights),
+              ),
             ),
-          ),
           // Cuerpo principal: lista de bloques o estado vacio si la rutina aun
           // no tiene contenido.
-          Expanded(
-            child: blocks.isEmpty
-                ? Center(
+            Expanded(
+              child: blocks.isEmpty
+                  ? Center(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 32),
                       child: Column(
@@ -4752,7 +4896,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                       ),
                     ),
                   )
-                : ReorderableListView.builder(
+                  : ReorderableListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     buildDefaultDragHandles: false,
                     itemCount: blocks.length,
@@ -4869,7 +5013,65 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                       );
                     },
                   ),
+                  ),
+            ],
           ),
+          if (floatingStatFeedback != null)
+            Positioned(
+              top: 10,
+              left: 16,
+              right: 16,
+              child: IgnorePointer(
+                child: AnimatedSlide(
+                  duration: const Duration(milliseconds: 220),
+                  offset: Offset.zero,
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 220),
+                    opacity: 1,
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Color.alphaBlend(
+                            floatingStatFeedback!.color.withValues(alpha: 0.68),
+                            const Color(0xFF11181F),
+                          ),
+                          borderRadius: BorderRadius.circular(999),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.16),
+                              blurRadius: 14,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              floatingStatFeedback!.icon,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              floatingStatFeedback!.label,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(

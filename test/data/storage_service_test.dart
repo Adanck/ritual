@@ -189,6 +189,7 @@ void main() {
       autoRequestNotificationPermissions: false,
       notificationHorizonDays: 14,
       showCompletedDatedEventsInUpcoming: false,
+      visualStyle: AppVisualStyle.ios,
     );
 
     await StorageService.saveAppSettings(settings);
@@ -198,5 +199,6 @@ void main() {
     expect(loadedSettings.autoRequestNotificationPermissions, isFalse);
     expect(loadedSettings.notificationHorizonDays, 14);
     expect(loadedSettings.showCompletedDatedEventsInUpcoming, isFalse);
+    expect(loadedSettings.visualStyle, AppVisualStyle.ios);
   });
 }
